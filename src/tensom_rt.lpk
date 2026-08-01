@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <Package Version="5">
+    <PathDelim Value="\"/>
+    <Name Value="tensom_rt"/>
+    <Type Value="RunTimeOnly"/>
+    <Author Value="Renat Suleymanov, Russia"/>
+    <CompilerOptions>
+      <Version Value="11"/>
+      <PathDelim Value="\"/>
+      <SearchPaths>
+        <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
+      </SearchPaths>
+    </CompilerOptions>
+    <License Value="MIT"/>
+    <Version Release="1"/>
+    <Files>
+      <Item>
+        <Filename Value="bcd.pas"/>
+        <UnitName Value="bcd"/>
+      </Item>
+      <Item>
+        <Filename Value="client.pas"/>
+        <UnitName Value="client"/>
+      </Item>
+      <Item>
+        <Filename Value="core.pas"/>
+        <UnitName Value="core"/>
+      </Item>
+      <Item>
+        <Filename Value="crc8.pas"/>
+        <UnitName Value="crc8"/>
+      </Item>
+      <Item>
+        <Filename Value="frames.pas"/>
+        <UnitName Value="frames"/>
+      </Item>
+      <Item>
+        <Filename Value="transport.pas"/>
+        <UnitName Value="transport"/>
+      </Item>
+      <Item>
+        <Filename Value="transport_serial.pas"/>
+        <UnitName Value="transport_serial"/>
+      </Item>
+    </Files>
+    <RequiredPkgs>
+      <Item>
+        <PackageName Value="LazSerialPort"/>
+      </Item>
+      <Item>
+        <PackageName Value="FCL"/>
+      </Item>
+    </RequiredPkgs>
+    <UsageOptions>
+      <UnitPath Value="$(PkgOutDir)"/>
+    </UsageOptions>
+    <PublishOptions>
+      <Version Value="2"/>
+      <UseFileFilters Value="True"/>
+    </PublishOptions>
+  </Package>
+</CONFIG>

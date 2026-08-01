@@ -1,0 +1,352 @@
+object FrmMain: TFrmMain
+  Left = 383
+  Height = 875
+  Top = 46
+  Width = 1330
+  Caption = 'ТЕНЗО-М Монитор протокола (TensoMLib)'
+  ClientHeight = 875
+  ClientWidth = 1330
+  DesignTimePPI = 120
+  LCLVersion = '4.8.0.0'
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  object Pnl: TPanel
+    Left = 0
+    Height = 144
+    Top = 0
+    Width = 1330
+    Align = alTop
+    BevelOuter = bvNone
+    ClientHeight = 144
+    ClientWidth = 1330
+    TabOrder = 0
+    object LblPort: TLabel
+      Left = 20
+      Height = 20
+      Top = 12
+      Width = 38
+      Caption = 'Порт:'
+      FocusControl = cbPort
+      ParentColor = False
+    end
+    object LblBaudRate: TLabel
+      Left = 350
+      Height = 20
+      Top = 12
+      Width = 67
+      Caption = 'Скорость:'
+      FocusControl = cbBaudRate
+      ParentColor = False
+    end
+    object LblAddress: TLabel
+      Left = 650
+      Height = 20
+      Top = 12
+      Width = 87
+      Caption = 'Адрес (HEX):'
+      FocusControl = edtAddress
+      ParentColor = False
+    end
+    object cbPort: TComboBox
+      Left = 70
+      Height = 28
+      Top = 10
+      Width = 250
+      ItemHeight = 20
+      TabOrder = 0
+    end
+    object cbBaudRate: TComboBox
+      Left = 440
+      Height = 28
+      Top = 10
+      Width = 175
+      ItemHeight = 20
+      TabOrder = 1
+    end
+    object edtAddress: TEdit
+      Left = 775
+      Height = 28
+      Top = 12
+      Width = 80
+      TabOrder = 2
+      Text = '01'
+    end
+    object btnConnect: TButton
+      Left = 20
+      Height = 42
+      Top = 60
+      Width = 125
+      Caption = 'Подключить'
+      TabOrder = 3
+      OnClick = btnConnectClick
+    end
+    object btnDisconnect: TButton
+      Left = 160
+      Height = 42
+      Top = 60
+      Width = 125
+      Caption = 'Отключить'
+      Enabled = False
+      TabOrder = 4
+      OnClick = btnDisconnectClick
+    end
+    object btnScanPorts: TButton
+      Left = 310
+      Height = 42
+      Top = 60
+      Width = 146
+      Caption = 'Обновить порты'
+      TabOrder = 5
+      OnClick = btnScanPortsClick
+    end
+    object btnClear: TButton
+      Left = 1125
+      Height = 42
+      Top = 60
+      Width = 100
+      Caption = 'Очистить'
+      TabOrder = 6
+      OnClick = btnClearClick
+    end
+    object StatusBar1: TStatusBar
+      Left = 0
+      Height = 29
+      Top = 115
+      Width = 1330
+      Panels = <      
+        item
+          Width = 312
+        end      
+        item
+          Width = 250
+        end      
+        item
+          Width = 250
+        end>
+    end
+  end
+  object Pnl2: TPanel
+    Left = 0
+    Height = 731
+    Top = 144
+    Width = 1330
+    Align = alClient
+    BevelOuter = bvNone
+    ClientHeight = 731
+    ClientWidth = 1330
+    TabOrder = 1
+    object GroupBox1: TGroupBox
+      Left = 10
+      Height = 710
+      Top = 10
+      Width = 478
+      Caption = ' Команды '
+      ClientHeight = 685
+      ClientWidth = 474
+      TabOrder = 0
+      object btnGetSerial: TButton
+        Left = 20
+        Height = 42
+        Top = 40
+        Width = 200
+        Caption = 'Серийный номер (A1)'
+        TabOrder = 0
+        OnClick = btnGetSerialClick
+      end
+      object btnSetAddress: TButton
+        Left = 248
+        Height = 42
+        Top = 40
+        Width = 200
+        Caption = 'Установить адрес (A0)'
+        TabOrder = 1
+        OnClick = btnSetAddressClick
+      end
+      object btnGetStatus: TButton
+        Left = 20
+        Height = 42
+        Top = 90
+        Width = 200
+        Caption = 'Состояние (BF)'
+        TabOrder = 2
+        OnClick = btnGetStatusClick
+      end
+      object btnGetBrutto: TButton
+        Left = 248
+        Height = 42
+        Top = 90
+        Width = 200
+        Caption = 'Вес БРУТТО (C3)'
+        TabOrder = 3
+        OnClick = btnGetBruttoClick
+      end
+      object btnGetNetto: TButton
+        Left = 20
+        Height = 42
+        Top = 140
+        Width = 200
+        Caption = 'Вес НЕТТО (C2)'
+        TabOrder = 4
+        OnClick = btnGetNettoClick
+      end
+      object btnGetADC: TButton
+        Left = 248
+        Height = 42
+        Top = 140
+        Width = 200
+        Caption = 'Код АЦП (CC)'
+        TabOrder = 5
+        OnClick = btnGetADCClick
+      end
+      object btnGetInputs: TButton
+        Left = 20
+        Height = 42
+        Top = 190
+        Width = 200
+        Caption = 'Дискретные входы (C4)'
+        TabOrder = 6
+        OnClick = btnGetInputsClick
+      end
+      object btnGetOutputs: TButton
+        Left = 248
+        Height = 42
+        Top = 190
+        Width = 200
+        Caption = 'Дискретные выходы (C5)'
+        TabOrder = 7
+        OnClick = btnGetOutputsClick
+      end
+      object btnReadIndicators: TButton
+        Left = 20
+        Height = 42
+        Top = 240
+        Width = 200
+        Caption = 'Индикация (C6)'
+        TabOrder = 8
+        OnClick = btnReadIndicatorsClick
+      end
+      object btnGetWeightPoint: TButton
+        Left = 248
+        Height = 42
+        Top = 240
+        Width = 200
+        Caption = 'Весовая точка (B1)'
+        TabOrder = 9
+        OnClick = btnGetWeightPointClick
+      end
+      object btnSetWeightPoint: TButton
+        Left = 20
+        Height = 42
+        Top = 290
+        Width = 200
+        Caption = 'Уст. весовую точку (D1)'
+        TabOrder = 10
+        OnClick = btnSetWeightPointClick
+      end
+      object btnGetParam: TButton
+        Left = 248
+        Height = 42
+        Top = 290
+        Width = 200
+        Caption = 'Спец. параметры (B3)'
+        TabOrder = 11
+        OnClick = btnGetParamClick
+      end
+      object btnSetParam: TButton
+        Left = 20
+        Height = 42
+        Top = 340
+        Width = 200
+        Caption = 'Уст. спец. параметры (B4)'
+        TabOrder = 12
+        OnClick = btnSetParamClick
+      end
+      object btnGetCalib: TButton
+        Left = 248
+        Height = 42
+        Top = 340
+        Width = 200
+        Caption = 'Параметры калибр. (CB)'
+        TabOrder = 13
+        OnClick = btnGetCalibClick
+      end
+      object btnZeroCalib: TButton
+        Left = 20
+        Height = 42
+        Top = 390
+        Width = 200
+        Caption = 'Калибровка нуля'
+        TabOrder = 14
+        OnClick = btnZeroCalibClick
+      end
+      object btnScaleCalib: TButton
+        Left = 248
+        Height = 42
+        Top = 390
+        Width = 200
+        Caption = 'Калибровка шкалы'
+        TabOrder = 15
+        OnClick = btnScaleCalibClick
+      end
+      object btnStartInit: TButton
+        Left = 20
+        Height = 42
+        Top = 440
+        Width = 200
+        Caption = 'Инит. передача (CE)'
+        TabOrder = 16
+        OnClick = btnStartInitClick
+      end
+      object btnStopInit: TButton
+        Left = 248
+        Height = 42
+        Top = 440
+        Width = 200
+        Caption = 'Остановить (CF)'
+        TabOrder = 17
+        OnClick = btnStopInitClick
+      end
+      object Label4: TLabel
+        Left = 20
+        Height = 20
+        Top = 500
+        Width = 137
+        Caption = 'Новый адрес (HEX):'
+        ParentColor = False
+      end
+      object edtNewAddress: TEdit
+        Left = 160
+        Height = 28
+        Top = 498
+        Width = 80
+        TabOrder = 18
+        Text = '02'
+      end
+    end
+    object GroupBox2: TGroupBox
+      Left = 504
+      Height = 710
+      Top = 10
+      Width = 810
+      Caption = ' Ответы и лог '
+      ClientHeight = 685
+      ClientWidth = 806
+      TabOrder = 1
+      object edtResponse: TMemo
+        Left = 10
+        Height = 679
+        Top = 25
+        Width = 790
+        Color = clBtnFace
+        Font.Color = clWindowText
+        Font.Height = -16
+        Font.Name = 'Courier New'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssBoth
+        TabOrder = 0
+        WordWrap = False
+      end
+    end
+  end
+end
