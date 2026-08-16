@@ -15,7 +15,7 @@ unit transport_serial;
 interface
 
 uses
-  Classes, SysUtils, transport
+  Classes, SysUtils, transport {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}, LazSynaSer{$ENDIF}
   ;
 
 type
@@ -24,8 +24,8 @@ type
   { TSerialTransport }
 
   TSerialTransport = class(ITensoMTransport)
-  private
-    fHandle: THandle;
+  private{$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
+    fSerial: TBlockSerial;{$ENDIF}
     fConnected: Boolean;
     fLastError: string;
     fPortName: string;
@@ -49,13 +49,11 @@ function ScanSerialPorts: TStringArray;
 
 implementation
 
-{$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
-uses
-  LazSynaSer{$IFDEF MSWINDOWS}, windows{$ENDIF}
-  ;
-{$ENDIF}
-
 {$IFDEF MSWINDOWS}
+uses
+  windows
+  ;
+
 { Хак для недоделанных USBtoCOM преобразователей под Windows: прямая настройка WinAPI DCB для исправленных стандартных
   драйверов USB serial, которые отклоняют SynSer Config() с помощью ERROR_INVALID_PARAMETER }
 
@@ -186,7 +184,7 @@ function TSerialTransport.Connect(const aPortName: string; aBaudRate: LongInt; a
       end;
 
       aSer.Purge;
-      fHandle := THandle(aSer);
+      fSerial := aSer;
       fPortName := aPortName;
       fConnected := True;
     finally
@@ -213,16 +211,16 @@ end;
 
 procedure TSerialTransport.Disconnect;
 begin
-  if fConnected and (fHandle <> 0) then
+  if fConnected and Assigned(fSerial) then
   begin
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
     try
-      TBlockSerial(fHandle).CloseSocket;
-      TBlockSerial(fHandle).Free;
+      fSerial.CloseSocket;
+      fSerial.Free;
     except
     end;
 {$ENDIF}
-    fHandle := 0;
+    fSerial := nil;
   end;
   fConnected := False;
 end;
@@ -247,11 +245,11 @@ begin
 
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
   try
-    TBlockSerial(fHandle).SendBuffer(@aData[0], Length(aData));
-    if TBlockSerial(fHandle).LastError = 0 then
+    fSerial.SendBuffer(@aData[0], Length(aData));
+    if fSerial.LastError = 0 then
       Result := Length(aData)
     else
-      fLastError := TBlockSerial(fHandle).LastErrorDesc;
+      fLastError := fSerial.LastErrorDesc;
   except
     on E: Exception do
       fLastError := E.Message;
@@ -269,9 +267,9 @@ begin
 
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
   try
-    TBlockSerial(fHandle).DeadlockTimeout := aTimeoutMS;
+    fSerial.DeadlockTimeout := aTimeoutMS;
     SetLength(aBuf, 256);
-    aReadCount := TBlockSerial(fHandle).RecvBuffer(@aBuf[0], 256);
+    aReadCount := fSerial.RecvBuffer(@aBuf[0], 256);
     if aReadCount > 0 then
     begin
       SetLength(Result, aReadCount);
@@ -289,7 +287,7 @@ begin
   if not fConnected then Exit;
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
   try
-    TBlockSerial(fHandle).Purge;
+    fSerial.Purge;
   except
   end;
 {$ENDIF}
