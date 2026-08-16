@@ -63,6 +63,7 @@ type
     function SendCommand(aCOP: Byte; const aData: TBytes = nil): TParsedFrame;
     procedure RaiseError(const aMsg: string);
     procedure DoFrameLog(aDirection: TFrameDirection; const aHex: string);
+    function IsRetryableException(E: Exception): Boolean;
   public
     constructor Create(aTransport: ITensoMTransport; aAddress: Byte; aUseCRC: Boolean = True);
 
@@ -76,9 +77,9 @@ type
 
     { === Политика повторов === }
 
-    { Количество повторов при таймауте или ошибке связи (0 = без повторов, по умолчанию).
-      Не повторяются: ошибка прибора (EEh), неподдерживаемая команда (FDh),
-      несовпадение COP ответа — это смысловые ошибки, повтор не поможет. }
+    { Количество повторов при таймауте, неполной отправке или ошибке целостности входного кадра (0 = без повторов).
+      Не повторяются: неверный адрес, ошибка прибора (EEh), неподдерживаемая команда (FDh), несовпадение COP
+      и другие семантические ошибки. }
     property RetryCount: Integer read fRetryCount write fRetryCount;
 
     { Пауза между повторами в мс (0 = без паузы, по умолчанию). }
@@ -88,8 +89,7 @@ type
 
     { Callback для логирования кадров. nil по умолчанию (логирование отключено).
       Вызывается внутри SendCommand для каждого отправленного и полученного кадра.
-      При повторах вызывается для каждой попытки, что позволяет диагностировать
-      проблемы со связью. }
+      При повторах вызывается для каждой попытки, что позволяет диагностировать проблемы со связью. }
     property OnFrameLog: TFrameLogEvent read fOnFrameLog write fOnFrameLog;
 
     { === Весовые измерения === }
@@ -106,8 +106,7 @@ type
     { === Конфигурация прибора === }
 
     { Передать настройку параметров (C1h).
-      Возвращает: MaxWeight, Division, DecimalPlaces, DeviceMode,
-      ADCFreqCode, FilterCode. }
+      Возвращает: MaxWeight, Division, DecimalPlaces, DeviceMode, ADCFreqCode, FilterCode. }
     function GetDeviceConfig(out aMaxWeight: Double; out aDivision: Double; out aDecimalPlaces: Integer;
       out aDeviceMode: string; out aADCFreqCode: Byte; out aFilterCode: Byte): Boolean;
 
@@ -221,6 +220,11 @@ begin
     fOnFrameLog(aDirection, aHex);
 end;
 
+function TTensoMDevice.IsRetryableException(E: Exception): Boolean;
+begin
+  Result := (E is ERetryableFrameError);
+end;
+
 function TTensoMDevice.SendCommand(aCOP: Byte; const aData: TBytes): TParsedFrame;
 var
   aReqFrame: TBytes;
@@ -322,17 +326,32 @@ begin
       end;
 
     except
-      on E: Exception do
+      { Повторяем только ошибки, явно классифицированные
+        как ERetryableFrameError.
+        Семантические и прочие ошибки не повторяются. }
+      on E: ERetryableFrameError do
       begin
-        { Ошибка связи или разбора кадра (таймаут, CRC, мусор) — повторяемая }
         aLastErrMsg := E.Message;
+
         if aAttempt < aMaxAttempts then
         begin
           if fRetryDelayMS > 0 then
             Sleep(fRetryDelayMS);
           Continue;
         end;
+
         RaiseError(aLastErrMsg);
+      end;
+
+      on E: ENonRetryableFrameError do
+      begin
+        RaiseError(E.Message);
+      end;
+
+      on E: Exception do
+      begin
+        { Неизвестная ошибка — НЕ повторяем. }
+        RaiseError(E.Message);
       end;
     end;
 

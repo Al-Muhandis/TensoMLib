@@ -233,6 +233,7 @@ end;
 function TSerialTransport.Send(const aData: TBytes): Integer;
 begin
   Result := 0;
+  fLastError := EmptyStr;
 
   if not fConnected then
   begin
@@ -246,10 +247,14 @@ begin
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
   try
     fSerial.SendBuffer(@aData[0], Length(aData));
-    if fSerial.LastError = 0 then
-      Result := Length(aData)
-    else
+
+    if fSerial.LastError <> 0 then
+    begin
       fLastError := fSerial.LastErrorDesc;
+      Exit;
+    end;
+
+    Result := Length(aData);
   except
     on E: Exception do
       fLastError := E.Message;
@@ -263,6 +268,7 @@ var
   aReadCount: Integer;
 begin
   Result := nil;
+  fLastError := EmptyStr;
   if not fConnected then Exit;
 
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
@@ -270,6 +276,13 @@ begin
     fSerial.DeadlockTimeout := aTimeoutMS;
     SetLength(aBuf, 256);
     aReadCount := fSerial.RecvBuffer(@aBuf[0], 256);
+
+    if fSerial.LastError <> 0 then
+    begin
+      fLastError := fSerial.LastErrorDesc;
+      Exit;
+    end;
+
     if aReadCount > 0 then
     begin
       SetLength(Result, aReadCount);
@@ -284,11 +297,23 @@ end;
 
 procedure TSerialTransport.Flush;
 begin
-  if not fConnected then Exit;
+  if not fConnected then
+  begin
+    fLastError := 'Transport is not connected';
+    Exit;
+  end;
+
+  fLastError := EmptyStr;
+
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
   try
     fSerial.Purge;
+
+    if fSerial.LastError <> 0 then
+      fLastError := fSerial.LastErrorDesc;
   except
+    on E: Exception do
+      fLastError := E.Message;
   end;
 {$ENDIF}
 end;
