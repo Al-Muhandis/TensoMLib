@@ -32,6 +32,7 @@ type
     function Send(const aData: TBytes): Integer;
     { Читает данные из порта. Таймаут в мс. }
     function Receive(aTimeoutMS: Cardinal = 1000): TBytes;
+    function SetBaudRate(aBaudRate: LongInt): Boolean;
     procedure Flush;
     function GetLastErrorMessage: string;
   end;
@@ -48,6 +49,7 @@ type
     fResponses: array of TBytes;  { очередь ответов }
     fSentLog: array of TBytes;    { лог отправленных данных }
     fResponseIndex: Integer;
+    fBaudRate: LongInt;
   public
     constructor Create;
     destructor Destroy; override;
@@ -68,6 +70,8 @@ type
     function Receive({%H-}aTimeoutMS: Cardinal = 1000): TBytes;
     procedure Flush;
     function GetLastErrorMessage: string;
+    function GetBaudRate: LongInt;
+    function SetBaudRate(aBaudRate: LongInt): Boolean;
   end;
 
 { Скорость по умолчанию: 9600 бод }
@@ -85,6 +89,7 @@ begin
   SetLength(fSentLog, 0);
   fConnected := False;
   fResponseIndex := 0;
+  fBaudRate := 9600;
 end;
 
 destructor TMockTransport.Destroy;
@@ -175,6 +180,17 @@ end;
 function TMockTransport.GetLastErrorMessage: string;
 begin
   Result := '';
+end;
+
+function TMockTransport.GetBaudRate: LongInt;
+begin
+  Result := fBaudRate;
+end;
+
+function TMockTransport.SetBaudRate(aBaudRate: LongInt): Boolean;
+begin
+  fBaudRate := aBaudRate;
+  Result := True;
 end;
 
 { === Вспомогательные функции === }

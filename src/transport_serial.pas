@@ -29,6 +29,10 @@ type
     fConnected: Boolean;
     fLastError: string;
     fPortName: string;
+    { Параметры порта }
+    fDataBits: Byte;
+    fParity: Char;
+    fStopBits: Byte;
   public
     destructor Destroy; override;
     function Connect(const aPortName: string; aBaudRate: LongInt; aDataBits: Byte = 8; aParity: Char = 'N';
@@ -39,6 +43,7 @@ type
     function Receive(aTimeoutMS: Cardinal = 1000): TBytes;
     procedure Flush;
     function GetLastErrorMessage: string;
+    function SetBaudRate(aBaudRate: LongInt): Boolean;
   end;
 
 { Возвращает список имён доступных последовательных портов.
@@ -186,6 +191,9 @@ function TSerialTransport.Connect(const aPortName: string; aBaudRate: LongInt; a
       aSer.Purge;
       fSerial := aSer;
       fPortName := aPortName;
+      fDataBits := aDataBits;
+      fParity := aParityChar;
+      fStopBits := aStopBits;  
       fConnected := True;
     finally
       { Если не подключились - освобождаем }
@@ -222,6 +230,9 @@ begin
 {$ENDIF}
     fSerial := nil;
   end;
+  fDataBits := 0;
+  fParity := #0;
+  fStopBits := 0;
   fConnected := False;
 end;
 
@@ -321,6 +332,43 @@ end;
 function TSerialTransport.GetLastErrorMessage: string;
 begin
   Result := fLastError;
+end;
+
+function TSerialTransport.SetBaudRate(aBaudRate: LongInt): Boolean;
+begin
+  Result := False;
+  fLastError := EmptyStr;
+
+  if not fConnected then
+  begin
+    fLastError := 'Transport is not connected';
+    Exit;
+  end;
+
+{$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
+  try
+    fSerial.Config(aBaudRate, fDataBits, fParity, fStopBits, False, False);
+
+    if fSerial.LastError = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+
+{$IFDEF MSWINDOWS}
+    { Fallback для драйверов, с которыми SynSer Config() не работает }
+    fLastError := ConfigureDCBDirect(fSerial.Handle, aBaudRate, fDataBits, fParity, fStopBits);
+
+    Result := fLastError = '';
+{$ELSE}
+    fLastError := fSerial.LastErrorDesc;
+{$ENDIF}
+
+  except
+    on E: Exception do
+      fLastError := E.Message;
+  end;
+{$ENDIF}
 end;
 
 { === Сканирование портов === }

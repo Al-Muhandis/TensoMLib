@@ -170,6 +170,12 @@
       <Item>
         <Name Value="EFrameError"/>
       </Item>
+      <Item>
+        <Name Value="ERetryableFrameError"/>
+      </Item>
+      <Item>
+        <Name Value="ENonRetryableFrameError"/>
+      </Item>
     </Exceptions>
   </Debugging>
 </CONFIG>

@@ -479,10 +479,21 @@ end;
 function TTensoMDevice.SetBaudRate(aRateCode: Byte): Boolean;
 var
   aData: TBytes = nil;
+  aBaudRate: LongInt;
 begin
+  aBaudRate := BaudRateToValue(aRateCode);
+
   SetLength(aData, 1);
   aData[0] := aRateCode;
+
+  { DBh + ответ ещё на старой скорости }
   SendCommand(COP_SET_BAUD, aData);
+
+  { Только после получения корректного ответа
+    переводим локальный COM-порт }
+  if not fTransport.SetBaudRate(aBaudRate) then
+    RaiseError('incorrect bauderate command');
+
   Result := True;
 end;
 
