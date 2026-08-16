@@ -25,17 +25,22 @@ uses
   Возвращает полный кадр с разделителями и заполнением. }
 function BuildFrame(aAddress, aCOP: Byte; const aData: TBytes; aUseCRC: Boolean): TBytes;
 
-{ Потоковый (stream) сборщик кадров (конечный автомат).
-  Для чтения из COM-порта байт за байтом.
-  Функция Feed() возвращает значение True, когда кадр полностью собран. }
 type
+  EFrameError = class(Exception);
+
+  { Потоковый (stream) сборщик кадров (конечный автомат).
+    Для чтения из COM-порта байт за байтом.
+    Функция Feed() возвращает значение True, когда кадр полностью собран. }
+
+  { TFrameCollector }
 
   TFrameCollector = class
   private
     fStarted:   Boolean;
     fPendingFF: Boolean;
     fBody:      TBytes;
-    fRaw:       TBytes;
+    fRaw:       TBytes; 
+    procedure AppendBody(B: Byte);
   public
     constructor Create;
     procedure Reset;
@@ -108,6 +113,18 @@ end;
 
 { --- TFrameCollector --- }
 
+procedure TFrameCollector.AppendBody(B: Byte);
+begin
+  if Length(fBody) >= FRAME_MAX_LEN then
+  begin
+    Reset;
+    raise EFrameError.CreateFmt('Frame too long: maximum %d bytes', [FRAME_MAX_LEN]);
+  end;
+
+  SetLength(fBody, Length(fBody) + 1);
+  fBody[High(fBody)] := B;
+end;
+
 constructor TFrameCollector.Create;
 begin
   inherited Create;
@@ -141,8 +158,7 @@ begin
     if (B = FRAME_DELIMITER) or (B = FRAME_STUFF_BYTE) then
       Exit; { пропустить ведущие FF / FE }
     fStarted := True;
-    SetLength(fBody, Length(fBody) + 1);
-    fBody[High(fBody)] := B;
+    AppendBody(B);
     Exit;
   end;
 
@@ -153,8 +169,7 @@ begin
       FRAME_STUFF_BYTE:
         begin
           { FF FE — экранирование FF в данных }
-          SetLength(fBody, Length(fBody) + 1);
-          fBody[High(fBody)] := FRAME_DELIMITER;
+          AppendBody(FRAME_DELIMITER);
           fPendingFF := False;
           Exit;
         end;
@@ -178,8 +193,7 @@ begin
         { Повторно сохранить в новый буфер (сброс очистил его) }
         SetLength(fRaw, 1);
         fRaw[0] := B;
-        SetLength(fBody, 1);
-        fBody[0] := B;
+        AppendBody(B);
       end;
       Exit;
     end;
@@ -187,14 +201,9 @@ begin
 
   { --- Обычный байт в теле --- }
   if B = FRAME_DELIMITER then
-  begin
-    fPendingFF := True;
-  end
+    fPendingFF := True
   else
-  begin
-    SetLength(fBody, Length(fBody) + 1);
-    fBody[High(fBody)] := B;
-  end;
+    AppendBody(B);
 end;
 
 { --- ParseFrame --- }

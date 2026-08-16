@@ -20,6 +20,9 @@ uses
   ;
 
 type
+
+  { TTestFrames }
+
   TTestFrames = class(TTestCase)
   published
     { BuildFrame }
@@ -36,6 +39,8 @@ type
     procedure Test_Collector_LeadingFFs;
     procedure Test_Collector_Reset;
     procedure Test_Collector_ByteByByte;
+    procedure Test_Collector_FrameTooLong;
+    procedure Test_Collector_FrameTooLong_StuffedFF;
 
     { ParseFrame }
     procedure Test_Parse_Simple;
@@ -336,6 +341,129 @@ begin
     end;
 
     AssertTrue('Frame extracted', aOK);
+  finally
+    aCol.Free;
+  end;
+end;
+
+procedure TTestFrames.Test_Collector_FrameTooLong;
+var
+  aCol: TFrameCollector;
+  aBody, aRaw: TBytes;
+  I: Integer;
+  aRaised: Boolean;
+begin
+  aCol := TFrameCollector.Create;
+  try
+    aRaised := False;
+
+    { Начало кадра }
+    aCol.Feed(FRAME_DELIMITER, aBody, aRaw);
+
+    { Набираем ровно FRAME_MAX_LEN байт тела.
+      Используем только значения $01..$FD,
+      чтобы они не воспринимались как служебные FF/FE. }
+    for I := 1 to FRAME_MAX_LEN do
+      aCol.Feed(Byte(((I - 1) mod $FD) + 1), aBody, aRaw);
+
+    try
+      { Следующий байт должен вызвать переполнение }
+      aCol.Feed($55, aBody, aRaw);
+    except
+      on E: EFrameError do
+        aRaised := True;
+    end;
+
+    AssertTrue('Frame too long must raise EFrameError', aRaised);
+
+  finally
+    aCol.Free;
+  end;
+end;
+
+procedure TTestFrames.Test_Collector_FrameTooLong_StuffedFF;
+var
+  aCol: TFrameCollector;
+  aBody, aRaw: TBytes;
+  aFrame: TBytes;
+  I: Integer;
+  aRaised: Boolean;
+  aComplete: Boolean;
+begin
+  aCol := TFrameCollector.Create;
+  try
+    aRaised := False;
+
+    { Начало кадра }
+    aCol.Feed(FRAME_DELIMITER, aBody, aRaw);
+
+    { Набираем FRAME_MAX_LEN - 1 байт тела.
+      Используем только значения $01..$FD. }
+    for I := 1 to FRAME_MAX_LEN - 1 do
+      aCol.Feed(Byte(((I - 1) mod $FD) + 1), aBody, aRaw);
+
+    { FF FE декодируется в один байт FF.
+      Это будет ровно FRAME_MAX_LEN-й байт тела,
+      поэтому ошибки быть НЕ должно. }
+    aCol.Feed(FRAME_DELIMITER, aBody, aRaw);
+    aCol.Feed(FRAME_STUFF_BYTE, aBody, aRaw);
+
+    { Ещё один FF FE пытается добавить
+      FRAME_MAX_LEN + 1-й байт тела. }
+    try
+      aCol.Feed(FRAME_DELIMITER, aBody, aRaw);
+      aCol.Feed(FRAME_STUFF_BYTE, aBody, aRaw);
+    except
+      on E: EFrameError do
+        aRaised := True;
+    end;
+
+    AssertTrue(
+      'Frame too long via stuffed FF must raise EFrameError',
+      aRaised
+    );
+
+    { После переполнения collector должен быть сброшен.
+      Проверяем сборкой нового корректного кадра. }
+    aFrame := BuildFrame(
+      $01,
+      COP_GET_BRUTTO,
+      nil,
+      False
+    );
+
+    aComplete := False;
+
+    for I := 0 to High(aFrame) do
+    begin
+      aComplete := aCol.Feed(aFrame[I], aBody, aRaw);
+      if aComplete then
+        Break;
+    end;
+
+    AssertTrue(
+      'Collector must accept a new frame after overflow',
+      aComplete
+    );
+
+    AssertEquals(
+      'New frame body length',
+      2,
+      Length(aBody)
+    );
+
+    AssertEquals(
+      'Address',
+      $01,
+      aBody[0]
+    );
+
+    AssertEquals(
+      'COP',
+      COP_GET_BRUTTO,
+      aBody[1]
+    );
+
   finally
     aCol.Free;
   end;
