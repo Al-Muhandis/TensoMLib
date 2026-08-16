@@ -36,11 +36,14 @@ type
     procedure Test_Collector_SimpleFrame;
     procedure Test_Collector_FrameWithCRC;
     procedure Test_Collector_FrameWithStuffing;
+    procedure Test_Collector_MultipleStuffedFF;
     procedure Test_Collector_LeadingFFs;
+    procedure Test_Collector_LeadingFFAndFE;
     procedure Test_Collector_Reset;
     procedure Test_Collector_ByteByByte;
     procedure Test_Collector_FrameTooLong;
     procedure Test_Collector_FrameTooLong_StuffedFF;
+    procedure Test_Collector_RecoveryAfterInvalidFF;
 
     { ParseFrame }
     procedure Test_Parse_Simple;
@@ -261,6 +264,52 @@ begin
   end;
 end;
 
+procedure TTestFrames.Test_Collector_MultipleStuffedFF;
+var
+  aCol: TFrameCollector;
+  aFrame: TBytes;
+  aBody, aRaw: TBytes;
+  aOK: Boolean;
+  I: Integer;
+begin
+  { Два FF подряд в данных:
+      FF FE FF FE
+
+    После распаковки:
+      FF FF
+  }
+
+  aFrame := BuildFrame(
+    $01,
+    COP_GET_BRUTTO,
+    MakeArr([$FF, $FF]),
+    False
+  );
+
+  aCol := TFrameCollector.Create;
+  try
+    aOK := False;
+
+    for I := 0 to High(aFrame) do
+    begin
+      aOK := aCol.Feed(aFrame[I], aBody, aRaw);
+      if aOK then
+        Break;
+    end;
+
+    AssertTrue('Frame collected', aOK);
+
+    AssertEquals('Body length', 4, Length(aBody));
+    AssertEquals('Address', $01, aBody[0]);
+    AssertEquals('COP', COP_GET_BRUTTO, aBody[1]);
+    AssertEquals('First unstuffed FF', $FF, aBody[2]);
+    AssertEquals('Second unstuffed FF', $FF, aBody[3]);
+
+  finally
+    aCol.Free;
+  end;
+end;
+
 procedure TTestFrames.Test_Collector_LeadingFFs;
 var
   aCol: TFrameCollector;
@@ -284,6 +333,46 @@ begin
     AssertEquals('Body len', 2, Length(aBody));
     AssertEquals('Addr', $01, aBody[0]);
     AssertEquals('COP', $C3, aBody[1]);
+  finally
+    aCol.Free;
+  end;
+end;
+
+procedure TTestFrames.Test_Collector_LeadingFFAndFE;
+var
+  aCol: TFrameCollector;
+  aBody, aRaw: TBytes;
+  aOK: Boolean;
+begin
+  aCol := TFrameCollector.Create;
+  try
+    { Мусор перед кадром }
+    aOK := aCol.Feed($FF, aBody, aRaw);
+    AssertFalse('Leading FF', aOK);
+
+    aOK := aCol.Feed($FE, aBody, aRaw);
+    AssertFalse('Leading FE', aOK);
+
+    aOK := aCol.Feed($FF, aBody, aRaw);
+    AssertFalse('Another leading FF', aOK);
+
+    { Настоящий кадр: 01 C0 FF FF }
+    aOK := aCol.Feed($01, aBody, aRaw);
+    AssertFalse('Address', aOK);
+
+    aOK := aCol.Feed(COP_ZERO, aBody, aRaw);
+    AssertFalse('COP', aOK);
+
+    aOK := aCol.Feed($FF, aBody, aRaw);
+    AssertFalse('First ending FF', aOK);
+
+    aOK := aCol.Feed($FF, aBody, aRaw);
+
+    AssertTrue('Frame collected', aOK);
+    AssertEquals('Body length', 2, Length(aBody));
+    AssertEquals('Address', $01, aBody[0]);
+    AssertEquals('COP', COP_ZERO, aBody[1]);
+
   finally
     aCol.Free;
   end;
@@ -463,6 +552,56 @@ begin
       COP_GET_BRUTTO,
       aBody[1]
     );
+
+  finally
+    aCol.Free;
+  end;
+end;
+
+procedure TTestFrames.Test_Collector_RecoveryAfterInvalidFF;
+var
+  aCol: TFrameCollector;
+  aBody, aRaw: TBytes;
+  aOK: Boolean;
+begin
+  aCol := TFrameCollector.Create;
+  try
+    { Старый кадр:
+        01 C3 FF 02
+
+      FF 02 — некорректная последовательность.
+
+      Байт 02 должен стать первым байтом нового кадра. }
+
+    aCol.Feed($01, aBody, aRaw);
+    aCol.Feed($C3, aBody, aRaw);
+    aCol.Feed($FF, aBody, aRaw);
+
+    aOK := aCol.Feed($02, aBody, aRaw);
+
+    AssertFalse(
+      'Invalid FF sequence must not complete frame',
+      aOK
+    );
+
+    { Новый кадр теперь начинается с 02 }
+    aOK := aCol.Feed($01, aBody, aRaw);
+    AssertFalse('New frame is not complete', aOK);
+
+    aOK := aCol.Feed($C0, aBody, aRaw);
+    AssertFalse('New frame is not complete', aOK);
+
+    aOK := aCol.Feed($FF, aBody, aRaw);
+    AssertFalse('One FF is not enough', aOK);
+
+    aOK := aCol.Feed($FF, aBody, aRaw);
+
+    AssertTrue('Recovered frame collected', aOK);
+
+    AssertEquals('Body length', 3, Length(aBody));
+    AssertEquals('New address', $02, aBody[0]);
+    AssertEquals('Data', $01, aBody[1]);
+    AssertEquals('COP', COP_ZERO, aBody[2]);
 
   finally
     aCol.Free;

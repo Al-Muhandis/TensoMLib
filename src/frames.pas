@@ -28,6 +28,12 @@ function BuildFrame(aAddress, aCOP: Byte; const aData: TBytes; aUseCRC: Boolean)
 type
   EFrameError = class(Exception);
 
+  TFrameState = (
+    fsWaitingStart,
+    fsInFrame,
+    fsGotFF
+  );
+
   { Потоковый (stream) сборщик кадров (конечный автомат).
     Для чтения из COM-порта байт за байтом.
     Функция Feed() возвращает значение True, когда кадр полностью собран. }
@@ -36,11 +42,13 @@ type
 
   TFrameCollector = class
   private
-    fStarted:   Boolean;
-    fPendingFF: Boolean;
-    fBody:      TBytes;
-    fRaw:       TBytes; 
+    fState: TFrameState;
+    fBody:  TBytes;
+    fRaw:   TBytes;
     procedure AppendBody(B: Byte);
+    procedure StateWaitingStart(B: Byte);
+    procedure StateInFrame(B: Byte);
+    function StateGotFF(B: Byte; out aBody, aRaw: TBytes): Boolean;
   public
     constructor Create;
     procedure Reset;
@@ -125,19 +133,108 @@ begin
   fBody[High(fBody)] := B;
 end;
 
+procedure TFrameCollector.StateWaitingStart(B: Byte);
+begin
+  { Сохраняем сырой байт даже если это ведущий FF/FE.
+    Это соответствует текущему поведению Collector. }
+  SetLength(fRaw, Length(fRaw) + 1);
+  fRaw[High(fRaw)] := B;
+
+  { FF и FE вне кадра игнорируются }
+  if (B = FRAME_DELIMITER) or
+     (B = FRAME_STUFF_BYTE) then
+    Exit;
+
+  { Первый обычный байт начинает кадр }
+  fState := fsInFrame;
+  AppendBody(B);
+end;
+
+procedure TFrameCollector.StateInFrame(B: Byte);
+begin
+  { Сохраняем байт в raw }
+  SetLength(fRaw, Length(fRaw) + 1);
+  fRaw[High(fRaw)] := B;
+
+  if B = FRAME_DELIMITER then
+  begin
+    { FF может быть:
+        FF FE -> экранированный FF в данных
+        FF FF -> конец кадра
+
+      Поэтому ждем следующий байт. }
+    fState := fsGotFF;
+  end
+  else
+    AppendBody(B);
+end;
+
+function TFrameCollector.StateGotFF(B: Byte; out aBody, aRaw: TBytes): Boolean;
+begin
+  Result := False;
+  { Текущий байт тоже является частью raw текущего кадра }
+  SetLength(fRaw, Length(fRaw) + 1);
+  fRaw[High(fRaw)] := B;
+
+  case B of
+
+    FRAME_STUFF_BYTE:
+      begin
+        { FF FE -> один FF в полезной нагрузке }
+        AppendBody(FRAME_DELIMITER);
+
+        fState := fsInFrame;
+      end;
+
+
+    FRAME_DELIMITER:
+      begin
+        { FF FF -> конец кадра }
+
+        aBody := Copy(fBody, 0, Length(fBody));
+        aRaw  := Copy(fRaw, 0, Length(fRaw));
+
+        Reset;
+        Result := True;
+      end;
+
+
+  else
+    begin
+      { FF + любой другой байт — некорректная
+        последовательность.
+
+        Текущий кадр отбрасываем. }
+
+      Reset;
+
+      { Но этот байт уже может быть началом
+        следующего кадра. }
+
+      if (B <> FRAME_DELIMITER) and
+         (B <> FRAME_STUFF_BYTE) then
+      begin
+        fState := fsInFrame;
+
+        SetLength(fRaw, 1);
+        fRaw[0] := B;
+
+        AppendBody(B);
+      end;
+    end;
+
+  end;
+end;
+
 constructor TFrameCollector.Create;
 begin
   inherited Create;
-  SetLength(fBody, 0);
-  SetLength(fRaw, 0);
-  fStarted   := False;
-  fPendingFF := False;
+  Reset;
 end;
 
 procedure TFrameCollector.Reset;
 begin
-  fStarted   := False;
-  fPendingFF := False;
+  fState := fsWaitingStart;
   SetLength(fBody, 0);
   SetLength(fRaw, 0);
 end;
@@ -152,58 +249,23 @@ begin
   SetLength(fRaw, Length(fRaw) + 1);
   fRaw[High(fRaw)] := B;
 
-  { --- Ожидание начала фрейма --- }
-  if not fStarted then
-  begin
-    if (B = FRAME_DELIMITER) or (B = FRAME_STUFF_BYTE) then
-      Exit; { пропустить ведущие FF / FE }
-    fStarted := True;
-    AppendBody(B);
-    Exit;
-  end;
 
-  { --- Предыдущий байт был FF — проверить что последует --- }
-  if fPendingFF then
-  begin
-    case B of
-      FRAME_STUFF_BYTE:
-        begin
-          { FF FE — экранирование FF в данных }
-          AppendBody(FRAME_DELIMITER);
-          fPendingFF := False;
-          Exit;
-        end;
-      FRAME_DELIMITER:
-        begin
-          { FF FF — конец фрейма }
-          aBody := Copy(fBody, 0, Length(fBody));
-          aRaw  := Copy(fRaw, 0, Length(fRaw));
-          Reset;
-          Result := True;
-          Exit;
-        end;
-    else
-      { Неверная последовательность: FF <не FE и не FF>.
-        Сброс настройки и попытка запустить новый кадр/фрейм. }
-      Reset;
-      { Этот байт может быть началом нового кадра }
-      if (B <> FRAME_DELIMITER) and (B <> FRAME_STUFF_BYTE) then
-      begin
-        fStarted := True;
-        { Повторно сохранить в новый буфер (сброс очистил его) }
-        SetLength(fRaw, 1);
-        fRaw[0] := B;
-        AppendBody(B);
-      end;
-      Exit;
-    end;
-  end;
+  case fState of
+    { --------------------------------------------------------------- }
+    { Ожидание начала кадра                                           }
+    { --------------------------------------------------------------- }
+    fsWaitingStart: StateWaitingStart(B);
 
-  { --- Обычный байт в теле --- }
-  if B = FRAME_DELIMITER then
-    fPendingFF := True
-  else
-    AppendBody(B);
+    { --------------------------------------------------------------- }
+    { Принимаем тело кадра                                            }
+    { --------------------------------------------------------------- }
+    fsInFrame:      StateInFrame(B);
+
+    { --------------------------------------------------------------- }
+    { Получили FF внутри кадра                                        }
+    { --------------------------------------------------------------- }
+    fsGotFF:        Result := StateGotFF(B, aBody, aRaw);
+  end;
 end;
 
 { --- ParseFrame --- }
