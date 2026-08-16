@@ -235,7 +235,15 @@ end;
 function TSerialTransport.Send(const aData: TBytes): Integer;
 begin
   Result := 0;
-  if not fConnected then Exit;
+
+  if not fConnected then
+  begin
+    fLastError := 'Transport is not connected';
+    Exit;
+  end;
+
+  if Length(aData) = 0 then
+    Exit;
 
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
   try

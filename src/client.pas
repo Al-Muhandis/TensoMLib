@@ -231,7 +231,7 @@ var
   aComplete: Boolean;
   T0: QWord;
   aPollInterval: Cardinal;
-  aAttempt, aMaxAttempts: Integer;
+  aAttempt, aMaxAttempts, aSent: Integer;
   aLastErrMsg: string;
   aParseOK: Boolean;
 begin
@@ -254,7 +254,25 @@ begin
     try
       { 2. Очищаем входной буфер и отправляем }
       fTransport.Flush;
-      fTransport.Send(aReqFrame);
+
+      aSent := fTransport.Send(aReqFrame);
+      if aSent <> Length(aReqFrame) then
+      begin
+        aLastErrMsg := Format(
+          'Failed to send complete frame: %d of %d bytes. %s',
+          [aSent, Length(aReqFrame), fTransport.GetLastErrorMessage]
+        );
+
+        if aAttempt < aMaxAttempts then
+        begin
+          if fRetryDelayMS > 0 then
+            Sleep(fRetryDelayMS);
+          Continue;
+        end;
+
+        RaiseError(aLastErrMsg);
+      end;
+
       DoFrameLog(fdSend, fLastRequestHex);
 
       { 3. Читаем ответ с таймаутом }
