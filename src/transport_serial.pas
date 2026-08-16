@@ -262,7 +262,6 @@ begin
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
   try
     TBlockSerial(fHandle).DeadlockTimeout := aTimeoutMS;
-    TBlockSerial(fHandle).Purge;
     SetLength(aBuf, 256);
     aReadCount := TBlockSerial(fHandle).RecvBuffer(@aBuf[0], 256);
     if aReadCount > 0 then
