@@ -56,15 +56,12 @@ end;
 function EncodePackedBCD(aValue: Int64; aByteCount: Integer; out aBytes: TBytes): Boolean;
 var
   I, D: Integer;
-  aNeg: Boolean;
   aAbsVal: Int64;
 begin           
   aBytes := nil;
-  aNeg := aValue < 0;
-  if aNeg then
-    aAbsVal := -aValue
-  else
-    aAbsVal := aValue;
+  if aValue < 0 then
+    Exit(False);
+  aAbsVal := aValue;
 
   { Проверка: максимальное значение для aByteCount байт BCD }
   case aByteCount of
