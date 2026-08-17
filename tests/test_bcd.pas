@@ -15,6 +15,9 @@ uses
   ;
 
 type
+
+  { TTestBCD }
+
   TTestBCD = class(TTestCase)
   published
     procedure Test_BCD_DecodeZero;
@@ -30,12 +33,13 @@ type
     procedure Test_Weight_NoDecimals;
     procedure Test_Weight_Overload;
     procedure Test_Weight_TooShort;
+    procedure Test_Weight_TooLong;
 end;
 
 implementation
 
 uses
-  core in '../src/core.pas'
+  core in '../src/core.pas', errors
   ;
 
 procedure TTestBCD.Test_BCD_DecodeZero;
@@ -146,10 +150,10 @@ begin
   try
     DecodePackedBCD(aArr);
   except
-    on E: Exception do
+    on E: ETensoMProtocolError do
       aRaised := True;
   end;
-  AssertTrue('Should raise on invalid BCD nibble', aRaised);
+  AssertTrue('Should raise ETensoMProtocolError on invalid BCD nibble', aRaised);
 end;
 
 procedure TTestBCD.Test_Weight_DocExample;
@@ -237,10 +241,27 @@ begin
   try
     DecodeWeight(aData);
   except
-    on E: Exception do
+    on E: ETensoMProtocolError do
       aRaised := True;
   end;
-  AssertTrue('Should raise on too short data', aRaised);
+  AssertTrue('Should raise on too short data (ETensoMProtocolError)', aRaised);
+end;
+
+procedure TTestBCD.Test_Weight_TooLong;
+var
+  aData: TBytes = nil;
+  aRaised: Boolean;
+begin
+  SetLength(aData, 5);
+  aData[0] := $05; aData[1] := $00;
+  aRaised := False;
+  try
+    DecodeWeight(aData);
+  except
+    on E: ETensoMProtocolError do
+      aRaised := True;
+  end;
+  AssertTrue('Should raise on too short data (ETensoMProtocolError)', aRaised);
 end;
 
 initialization

@@ -13,7 +13,7 @@ unit bcd;
 interface
 
 uses
-  SysUtils, core in '../src/core.pas'
+  SysUtils, core, errors
   ;
 
 { Декодировать массив упакованных BCD-байтов (little-endian) в целое число.
@@ -45,7 +45,7 @@ begin
     aLo := B and $0F;
     aHi := (B shr 4) and $0F;
     if (aLo > 9) or (aHi > 9) then
-      raise Exception.CreateFmt('Некорректный BCD-байт %02X', [B]);
+      raise ETensoMProtocolError.CreateFmt('Invalid BCD-byte %02X', [B]);
     Result := Result + Int64(aLo) * aMultiplier;
     aMultiplier := aMultiplier * 10;
     Result := Result + Int64(aHi) * aMultiplier;
@@ -96,9 +96,9 @@ var
 begin
   Initialize(Result);
 
-  if Length(aData) < 4 then
-    raise Exception.CreateFmt(
-      'Ожидалось 4 байта веса, получено %d', [Length(aData)]);
+  if Length(aData) <> 4 then
+    raise ETensoMProtocolError.CreateFmt(
+      'Expected 4 bytes of weight, received %d', [Length(aData)]);
 
   { Декодируем 3 байта BCD }
   aRaw := DecodePackedBCD(Copy(aData, 0, 3));
