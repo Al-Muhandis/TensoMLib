@@ -48,6 +48,7 @@ type
     procedure Test_DeviceError_EEh;
     procedure Test_UnsupportedCommand_FDh;
     procedure Test_Timeout;
+    procedure Test_CRCError_Type;
 
     { CRC-автоопределение }
     procedure Test_AutoDetectCRC_NoCRC;
@@ -88,9 +89,16 @@ type
     procedure Test_FrameLog_OnRetry;
     procedure Test_FrameLog_TimeoutOnlySend;
     procedure Test_FrameLog_SemanticErrorLogsBoth;
+
+    { Иерархия исключений }
+    procedure Test_ExceptionHierarchy;
   end;
 
 implementation
+
+uses
+  errors
+  ;
 
 type
 
@@ -288,7 +296,7 @@ begin
     aRespFrame := BuildFrame($01, COP_ZERO, nil, True);
     fMock.QueueResponse(aRespFrame);
 
-    AssertTrue('Tare', fDev.Tare);
+    fDev.Tare;
     AssertEquals('Sent count', 1, fMock.GetSentCount);
   finally
     fDev.Free;
@@ -365,13 +373,13 @@ begin
     try
       fDev.GetBruttoWeight;
     except
-      on E: Exception do
+      on E: ETensoMDeviceError do
       begin
         aRaised := True;
         AssertTrue('Contains error text', Pos('Error CRC', E.Message) > 0);
       end;
     end;
-    AssertTrue('Should raise EEh error', aRaised);
+    AssertTrue('Should raise ETensoMDeviceError', aRaised);
   finally
     fDev.Free;
     fMock.Free;
@@ -402,14 +410,13 @@ begin
     try
       fDev.GetADCCode;
     except
-      on E: Exception do
+      on E: ETensoMProtocolError do
       begin
         aRaised := True;
-        AssertTrue('Contains unsupported text',
-          Pos('is not supported', E.Message) > 0);
+        AssertTrue('Contains unsupported text', Pos('is not supported', E.Message) > 0);
       end;
     end;
-    AssertTrue('Should raise FDh error', aRaised);
+    AssertTrue('Should raise ETensoMProtocolError', aRaised);
   finally
     fDev.Free;
     fMock.Free;
@@ -427,12 +434,11 @@ begin
     try
       fDev.GetBruttoWeight;
     except
-      on E: Exception do
+      on E: ETensoMTimeoutError do
         aRaised := True;
     end;
-    AssertTrue('Should raise timeout', aRaised);
-    AssertTrue('Contains timeout text',
-      Pos('timeout', fDev.LastError) > 0);
+    AssertTrue('Should raise ETensoMTimeoutError', aRaised);
+    AssertTrue('Contains timeout text', Pos('timeout', fDev.LastError) > 0);
   finally
     fDev.Free;
     fMock.Free;
@@ -555,8 +561,7 @@ begin
     aRespFrame := BuildFrame($01, COP_GET_SETTINGS, aData, True);
     fMock.QueueResponse(aRespFrame);
 
-    AssertTrue('Config', fDev.GetDeviceConfig(
-      aMaxW, aDiv_, aDecimals, aMode, aADCFreq, aFilt));
+    fDev.GetDeviceConfig(aMaxW, aDiv_, aDecimals, aMode, aADCFreq, aFilt);
 
     AssertEquals('MaxWeight', 5000.0, aMaxW, 0.001); { 50000 / 10^1 }
     AssertEquals('Division', 5.0, aDiv_, 0.001);    { 50 / 10^1 }
@@ -613,7 +618,7 @@ begin
     aRespFrame := BuildFrame($01, COP_GET_DISPLAY, aData, True);
     fMock.QueueResponse(aRespFrame);
 
-    AssertTrue('Indicators', fDev.GetIndicators(aText, aFlags));
+    fDev.GetIndicators(aText, aFlags);
     AssertEquals('Text', '12345', aText);
     AssertEquals('Flags', $24, aFlags);
   finally
@@ -658,7 +663,7 @@ begin
     aRespFrame := BuildFrame($01, COP_DOSING_CTRL, nil, True);
     fMock.QueueResponse(aRespFrame);
 
-    AssertTrue('DosingStart', fDev.DosingControl(DOS_START));
+    fDev.DosingControl(DOS_START);
     AssertEquals('Sent', 1, fMock.GetSentCount);
   finally
     fDev.Free;
@@ -765,6 +770,29 @@ begin
   end;
 end;
 
+procedure TTestClient.Test_CRCError_Type;
+var
+  aRaised: Boolean;
+begin
+  SetupMock(True);
+  try
+    QueueBadCRCWeightResponse;
+
+    aRaised := False;
+    try
+      fDev.GetBruttoWeight;
+    except
+      on E: ETensoMCRCError do
+        aRaised := True;
+    end;
+
+    AssertTrue('Should raise ETensoMCRCError', aRaised);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
 procedure TTestClient.Test_Retry_TimeoutExhausted;
 var
   aRaised: Boolean;
@@ -779,15 +807,15 @@ begin
     try
       fDev.GetBruttoWeight;
     except
-      on E: Exception do
+      on E: ETensoMTimeoutError do
         aRaised := True;
     end;
 
+    AssertTrue('Should raise ETensoMTimeoutError after exhausting retries', aRaised);
+
     AssertTrue('Should raise after exhausting retries', aRaised);
-    AssertEquals('Should send 3 times (1 initial + 2 retries)',
-      3, fMock.GetSentCount);
-    AssertTrue('Error should mention timeout',
-      Pos('timeout', fDev.LastError) > 0);
+    AssertEquals('Should send 3 times (1 initial + 2 retries)', 3, fMock.GetSentCount);
+    AssertTrue('Error should mention timeout', Pos('timeout', fDev.LastError) > 0);
   finally
     fDev.Free;
     fMock.Free;
@@ -813,7 +841,7 @@ begin
     try
       fDev.GetBruttoWeight;
     except
-      on E: Exception do
+      on E: ETensoMDeviceError do
         aRaised := True;
     end;
 
@@ -846,13 +874,12 @@ begin
     try
       fDev.GetADCCode;
     except
-      on E: Exception do
+      on E: ETensoMProtocolError do
         aRaised := True;
     end;
 
-    AssertTrue('Should raise FDh', aRaised);
-    AssertEquals('Should send only once (FDh is not retried)',
-      1, fMock.GetSentCount);
+    AssertTrue('Should raise ETensoMProtocolError', aRaised);
+    AssertEquals('Should send only once (FDh is not retried)', 1, fMock.GetSentCount);
   finally
     fDev.Free;
     fMock.Free;
@@ -879,11 +906,11 @@ begin
     try
       fDev.GetBruttoWeight;
     except
-      on E: Exception do
+      on E: ETensoMProtocolError do
         aRaised := True;
     end;
 
-    AssertTrue('Should raise COP mismatch', aRaised);
+    AssertTrue('Should raise COP mismatch (ETensoMProtocolError)', aRaised);
     AssertEquals('Should send only once (COP mismatch is not retried)',
       1, fMock.GetSentCount);
     AssertTrue('Error should mention COP codes',
@@ -1112,6 +1139,32 @@ begin
       Pos('ee', aLog.GetHex(1)) > 0);
   finally
     aLog.Free;
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+procedure TTestClient.Test_ExceptionHierarchy;
+var
+  aRaised: Boolean;
+begin
+  SetupMock(True);
+  try
+    QueueBadCRCWeightResponse;
+
+    aRaised := False;
+    try
+      fDev.GetBruttoWeight;
+    except
+      on E: ETensoMFrameError do
+        aRaised := True;
+    end;
+
+    AssertTrue(
+      'ETensoMCRCError must be an ETensoMFrameError',
+      aRaised
+    );
+  finally
     fDev.Free;
     fMock.Free;
   end;

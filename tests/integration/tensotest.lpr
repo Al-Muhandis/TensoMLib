@@ -225,26 +225,21 @@ var
   aMode: string;
   aADCFreq, aFilt: Byte;
   aExtra: string;
-  aOK: Boolean;
 begin
-  aOK := False;
   aExtra := '';
   try
-    aOK := Dev.GetDeviceConfig(aMaxW, aDiv_, aDecimals, aMode, aADCFreq, aFilt);
-    if aOK then
-    begin
-      aExtra := '      <config>' + sLineBreak +
-        '        <max_weight>' + FloatToStr(aMaxW) + '</max_weight>' + sLineBreak +
-        '        <division>' + FloatToStr(aDiv_) + '</division>' + sLineBreak +
-        '        <decimal_places>' + IntToStr(aDecimals) + '</decimal_places>' + sLineBreak +
-        '        <mode>' + aMode + '</mode>' + sLineBreak +
-        '        <adc_freq_code>' + IntToStr(aADCFreq) + '</adc_freq_code>' + sLineBreak +
-        '        <filter_code>' + IntToStr(aFilt) + '</filter_code>' + sLineBreak +
-        '      </config>';
-      RecordTest('Device configuration', 'C1h', True,
-        Format('max=%.2f div=%.2f dec=%d mode=%s', [aMaxW, aDiv_, aDecimals, aMode]),
-        '', Dev.LastRequestHex, Dev.LastResponseHex, aExtra);
-    end;
+    Dev.GetDeviceConfig(aMaxW, aDiv_, aDecimals, aMode, aADCFreq, aFilt);
+    aExtra := '      <config>' + sLineBreak +
+      '        <max_weight>' + FloatToStr(aMaxW) + '</max_weight>' + sLineBreak +
+      '        <division>' + FloatToStr(aDiv_) + '</division>' + sLineBreak +
+      '        <decimal_places>' + IntToStr(aDecimals) + '</decimal_places>' + sLineBreak +
+      '        <mode>' + aMode + '</mode>' + sLineBreak +
+      '        <adc_freq_code>' + IntToStr(aADCFreq) + '</adc_freq_code>' + sLineBreak +
+      '        <filter_code>' + IntToStr(aFilt) + '</filter_code>' + sLineBreak +
+      '      </config>';
+    RecordTest('Device configuration', 'C1h', True,
+      Format('max=%.2f div=%.2f dec=%d mode=%s', [aMaxW, aDiv_, aDecimals, aMode]),
+      '', Dev.LastRequestHex, Dev.LastResponseHex, aExtra);
   except
     on E: Exception do
       RecordTest('Device configuration', 'C1h', False, '',
@@ -380,16 +375,14 @@ var
   aExtra: string;
 begin
   try
-    if Dev.GetIndicators(aText_, aFlags) then
-    begin
-      aExtra := '      <indicators>' + sLineBreak +
-        '        <text>' + StringReplace(StringReplace(aText_, '&', '&amp;', [rfReplaceAll]), '<', '&lt;', [rfReplaceAll]) + '</text>' + sLineBreak +
-        '        <flags>$' + IntToHex(aFlags, 2) + '</flags>' + sLineBreak +
-        '      </indicators>';
-      RecordTest('Indicators', 'C6h', True,
-        Format('text="%s" flags=$%02X', [aText_, aFlags]), '',
-        Dev.LastRequestHex, Dev.LastResponseHex, aExtra, True);
-    end;
+    Dev.GetIndicators(aText_, aFlags);
+    aExtra := '      <indicators>' + sLineBreak +
+      '        <text>' + StringReplace(StringReplace(aText_, '&', '&amp;', [rfReplaceAll]), '<', '&lt;', [rfReplaceAll]) + '</text>' + sLineBreak +
+      '        <flags>$' + IntToHex(aFlags, 2) + '</flags>' + sLineBreak +
+      '      </indicators>';
+    RecordTest('Indicators', 'C6h', True,
+      Format('text="%s" flags=$%02X', [aText_, aFlags]), '',
+      Dev.LastRequestHex, Dev.LastResponseHex, aExtra, True);
   except
     on E: Exception do
       RecordTest('Indicators', 'C6h', False, '',

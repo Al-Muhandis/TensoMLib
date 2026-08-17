@@ -60,7 +60,7 @@ type
 implementation
 
 uses
-  core in '../src/core.pas'
+  core in '../src/core.pas', errors
   ;
 
 { --- Вспомогательные функции --- }
@@ -459,7 +459,7 @@ begin
       { Следующий байт должен вызвать переполнение }
       aCol.Feed($55, aBody, aRaw);
     except
-      on E: EFrameError do
+      on E: ETensoMFrameError do
         aRaised := True;
     end;
 
@@ -503,23 +503,15 @@ begin
       aCol.Feed(FRAME_DELIMITER, aBody, aRaw);
       aCol.Feed(FRAME_STUFF_BYTE, aBody, aRaw);
     except
-      on E: EFrameError do
+      on E: ETensoMFrameError do
         aRaised := True;
     end;
 
-    AssertTrue(
-      'Frame too long via stuffed FF must raise EFrameError',
-      aRaised
-    );
+    AssertTrue('Frame too long via stuffed FF must raise EFrameError', aRaised);
 
     { После переполнения collector должен быть сброшен.
       Проверяем сборкой нового корректного кадра. }
-    aFrame := BuildFrame(
-      $01,
-      COP_GET_BRUTTO,
-      nil,
-      False
-    );
+    aFrame := BuildFrame($01, COP_GET_BRUTTO, nil, False);
 
     aComplete := False;
 
@@ -660,10 +652,10 @@ begin
   try
     ParseFrame(aBody, aBody, $01, True);
   except
-    on E: Exception do
+    on E: ETensoMCRCError do
       aRaised := True;
   end;
-  AssertTrue('Should raise on bad CRC', aRaised);
+  AssertTrue('Should raise on bad CRC (ETensoMCRCError)', aRaised);
 end;
 
 procedure TTestFrames.Test_Parse_WrongAddress;
@@ -677,10 +669,10 @@ begin
   try
     ParseFrame(aBody, aBody, $01, False);
   except
-    on E: Exception do
+    on E: ETensoMProtocolError do
       aRaised := True;
   end;
-  AssertTrue('Should raise on wrong address', aRaised);
+  AssertTrue('Should raise ETensoMProtocolError on wrong address', aRaised)
 end;
 
 procedure TTestFrames.Test_Parse_TooShort;
@@ -694,10 +686,10 @@ begin
   try
     ParseFrame(aBody, aBody, $01, False);
   except
-    on E: Exception do
+    on E: ETensoMFrameError do
       aRaised := True;
   end;
-  AssertTrue('Should raise on too short frame', aRaised);
+  AssertTrue('Should raise on too short frame (ETensoMFrameError)', aRaised);
 end;
 
 { --- Интеграционные --- }

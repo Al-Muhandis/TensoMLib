@@ -14,7 +14,7 @@ unit frames;
 interface
 
 uses
-  SysUtils, core, crc8
+  SysUtils, core, crc8, errors
   ;
 
 { Создайте фрейм (frame) для передачи.
@@ -26,14 +26,6 @@ uses
 function BuildFrame(aAddress, aCOP: Byte; const aData: TBytes; aUseCRC: Boolean): TBytes;
 
 type
-  EFrameError = class(Exception);
-
-  { Ошибка структуры/целостности кадра, которую имеет смысл повторить. }
-  ERetryableFrameError = class(EFrameError);
-
-  { Семантическая ошибка кадра — повторять не нужно. }
-  ENonRetryableFrameError = class(EFrameError);
-
   TFrameState = (
     fsWaitingStart,
     fsInFrame,
@@ -132,7 +124,7 @@ begin
   if Length(fBody) >= FRAME_MAX_LEN then
   begin
     Reset;
-    raise ERetryableFrameError.CreateFmt('Frame too long: maximum %d bytes', [FRAME_MAX_LEN]);
+    raise ETensoMFrameError.CreateFmt('Frame too long: maximum %d bytes', [FRAME_MAX_LEN]);
   end;
 
   SetLength(fBody, Length(fBody) + 1);
@@ -288,16 +280,16 @@ begin
     Inc(aMinLen);
 
   if Length(aBody) < aMinLen then
-    raise ERetryableFrameError.Create('Frame too short');
+    raise ETensoMFrameError.Create('Frame too short');
 
   if aBody[0] <> aExpectedAddress then
-    raise ENonRetryableFrameError.CreateFmt('Response from address %d, expected %d', [aBody[0], aExpectedAddress]);
+    raise ETensoMProtocolError.CreateFmt('Response from address %d, expected %d', [aBody[0], aExpectedAddress]);
 
   aDataEnd := Length(aBody);
   if aUseCRC then
   begin
     if not VerifyCRC(aBody) then
-      raise ERetryableFrameError.Create('CRC error in response');
+      raise ETensoMCRCError.Create('CRC error in response');
     Dec(aDataEnd); { исключить CRC-байт из данных }
   end;
 

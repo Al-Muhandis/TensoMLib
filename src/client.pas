@@ -60,8 +60,12 @@ type
     fLastResponseHex: string;
     fLastError: string;
 
+    procedure RaiseDeviceError(const aMsg: string); 
+    procedure RaiseFrameError(const aMsg: string);
+    procedure RaiseProtocolError(const aMsg: string);
+    procedure RaiseTimeoutError(const aMsg: string);
+    procedure RaiseTransportError(const aMsg: string);
     function SendCommand(aCOP: Byte; const aData: TBytes = nil): TParsedFrame;
-    procedure RaiseError(const aMsg: string);
     procedure DoFrameLog(aDirection: TFrameDirection; const aHex: string);
     function IsRetryableException(E: Exception): Boolean;
   public
@@ -101,23 +105,23 @@ type
     function GetNettoWeight: TWeightData;
 
     { Обнулить показания веса / тарирование (C0h). }
-    function Tare: Boolean;
+    procedure Tare;
 
     { === Конфигурация прибора === }
 
     { Передать настройку параметров (C1h).
       Возвращает: MaxWeight, Division, DecimalPlaces, DeviceMode, ADCFreqCode, FilterCode. }
-    function GetDeviceConfig(out aMaxWeight: Double; out aDivision: Double; out aDecimalPlaces: Integer;
-      out aDeviceMode: string; out aADCFreqCode: Byte; out aFilterCode: Byte): Boolean;
+    procedure GetDeviceConfig(out aMaxWeight: Double; out aDivision: Double; out aDecimalPlaces: Integer;
+      out aDeviceMode: string; out aADCFreqCode: Byte; out aFilterCode: Byte);
 
     { Установить скорость обмена (DBh). }
-    function SetBaudRate(aRateCode: Byte): Boolean;
+    procedure SetBaudRate(aRateCode: Byte);
 
     { Установить полосу пропускания фильтра (DAh). }
-    function SetFilter(aFilterCode: Byte): Boolean;
+    procedure SetFilter(aFilterCode: Byte);
 
     { Установить частоту обновления АЦП (D9h). }
-    function SetADCFrequency(aFreqCode: Byte): Boolean;
+    procedure SetADCFrequency(aFreqCode: Byte);
 
     { === Системная информация === }
 
@@ -128,7 +132,7 @@ type
     function GetSystemStatus: Byte;
 
     { Присвоить устройству новый сетевой адрес (A0h). }
-    function SetNetworkAddress(aNewAddr: Byte): Boolean;
+    procedure SetNetworkAddress(aNewAddr: Byte);
 
     { === Дискретные входы/выходы === }
 
@@ -139,12 +143,12 @@ type
     function GetDiscreteOutputs: TBytes;
 
     { Установить сигналы на дискретных выходах (D0h). }
-    function SetDiscreteOutputs(const aValue: TBytes): Boolean;
+    procedure SetDiscreteOutputs(const aValue: TBytes);
 
     { === Индикаторы и клавиатура === }
 
     { Значение индикаторов (C6h). Текст + флаги. }
-    function GetIndicators(out aText: string; out aFlags: Byte): Boolean;
+    procedure GetIndicators(out aText: string; out aFlags: Byte);
 
     { Введённая кодовая последовательность — код продукта (C7h). }
     function GetProductCode: string;
@@ -165,23 +169,23 @@ type
     { === Дозирование === }
 
     { Управление дозированием (DFh). }
-    function DosingControl(aCmd: Byte): Boolean;
+    procedure DosingControl(aCmd: Byte);
 
     { === Инициативная передача === }
 
     { Начать инициативную передачу (CEh). ACOP — какой код данных запрашивать. }
-    function StartInitTransmit(aCOP: Byte): Boolean;
+    procedure StartInitTransmit(aCOP: Byte);
 
     { Остановить инициативную передачу (CFh). }
-    function StopInitTransmit: Boolean;
+    procedure StopInitTransmit;
 
     { === Отображение === }
 
     { Вывести символьное сообщение (D2h). }
-    function DisplayMessage(aDeviceNum: Byte; const aMsg: string): Boolean;
+    procedure DisplayMessage(aDeviceNum: Byte; const aMsg: string);
 
     { Перевести прибор в режим индикации веса (CDh). }
-    function SetDisplayWeightMode: Boolean;
+    procedure SetDisplayWeightMode;
 
     { === Диагностика === }
 
@@ -192,11 +196,17 @@ type
 
 implementation
 
+uses
+  errors
+  ;
+
 { === Создание / уничтожение === }
 
 constructor TTensoMDevice.Create(aTransport: ITensoMTransport; aAddress: Byte; aUseCRC: Boolean);
 begin
   inherited Create;
+  if Assigned(aTransport) then
+    raise EArgumentNilException.Create('Transport not assigned');
   fTransport := aTransport;
   fAddress := aAddress;
   fUseCRC := aUseCRC;
@@ -208,10 +218,34 @@ end;
 
 { === Внутренние методы === }
 
-procedure TTensoMDevice.RaiseError(const aMsg: string);
+procedure TTensoMDevice.RaiseFrameError(const aMsg: string);
 begin
   fLastError := aMsg;
-  raise Exception.Create(aMsg);
+  raise ETensoMFrameError.Create(aMsg);
+end;
+
+procedure TTensoMDevice.RaiseTransportError(const aMsg: string);
+begin
+  fLastError := aMsg;
+  raise ETensoMTransportError.Create(aMsg);
+end;
+
+procedure TTensoMDevice.RaiseTimeoutError(const aMsg: string);
+begin
+  fLastError := aMsg;
+  raise ETensoMTimeoutError.Create(aMsg);
+end;
+
+procedure TTensoMDevice.RaiseDeviceError(const aMsg: string);
+begin
+  fLastError := aMsg;
+  raise ETensoMDeviceError.Create(aMsg);
+end;
+
+procedure TTensoMDevice.RaiseProtocolError(const aMsg: string);
+begin
+  fLastError := aMsg;
+  raise ETensoMProtocolError.Create(aMsg);
 end;
 
 procedure TTensoMDevice.DoFrameLog(aDirection: TFrameDirection; const aHex: string);
@@ -222,7 +256,7 @@ end;
 
 function TTensoMDevice.IsRetryableException(E: Exception): Boolean;
 begin
-  Result := (E is ERetryableFrameError);
+  Result := (E is ETensoMTransportError) or (E is ETensoMFrameError);
 end;
 
 function TTensoMDevice.SendCommand(aCOP: Byte; const aData: TBytes): TParsedFrame;
@@ -243,7 +277,7 @@ begin
   Initialize(Result);
 
   if not fTransport.IsConnected then
-    RaiseError('Transport is not connected');
+    RaiseTransportError('Transport is not connected');
 
   { 1. Строим кадр запроса (не меняется между попытками) }
   aReqFrame := BuildFrame(fAddress, aCOP, aData, fUseCRC);
@@ -262,10 +296,8 @@ begin
       aSent := fTransport.Send(aReqFrame);
       if aSent <> Length(aReqFrame) then
       begin
-        aLastErrMsg := Format(
-          'Failed to send complete frame: %d of %d bytes. %s',
-          [aSent, Length(aReqFrame), fTransport.GetLastErrorMessage]
-        );
+        aLastErrMsg := Format('Failed to send complete frame: %d of %d bytes. %s',
+          [aSent, Length(aReqFrame), fTransport.GetLastErrorMessage]);
 
         if aAttempt < aMaxAttempts then
         begin
@@ -274,7 +306,7 @@ begin
           Continue;
         end;
 
-        RaiseError(aLastErrMsg);
+        RaiseTransportError(aLastErrMsg);
       end;
 
       DoFrameLog(fdSend, fLastRequestHex);
@@ -318,7 +350,7 @@ begin
               Sleep(fRetryDelayMS);
             Continue;
           end;
-          RaiseError(aLastErrMsg);
+          RaiseTimeoutError(aLastErrMsg);
         end;
 
       finally
@@ -326,32 +358,25 @@ begin
       end;
 
     except
-      { Повторяем только ошибки, явно классифицированные
-        как ERetryableFrameError.
-        Семантические и прочие ошибки не повторяются. }
-      on E: ERetryableFrameError do
+      { Повторяем только ошибки, явно классифицированные как повторяемые
+        (см. IsRetryableException): ETensoMTransportError и ETensoMFrameError.
+        Семантические (ETensoMDeviceError, ETensoMProtocolError) и любые
+        прочие ошибки пробрасываются выше без повтора. }
+      on E: ETensoMError do
       begin
-        aLastErrMsg := E.Message;
-
-        if aAttempt < aMaxAttempts then
+        if IsRetryableException(E) then
         begin
-          if fRetryDelayMS > 0 then
-            Sleep(fRetryDelayMS);
-          Continue;
+          aLastErrMsg := E.Message;
+
+          if aAttempt < aMaxAttempts then
+          begin
+            if fRetryDelayMS > 0 then
+              Sleep(fRetryDelayMS);
+            Continue;
+          end;
         end;
 
-        RaiseError(aLastErrMsg);
-      end;
-
-      on E: ENonRetryableFrameError do
-      begin
-        RaiseError(E.Message);
-      end;
-
-      on E: Exception do
-      begin
-        { Неизвестная ошибка — НЕ повторяем. }
-        RaiseError(E.Message);
+        raise;
       end;
     end;
 
@@ -363,20 +388,18 @@ begin
     if Result.COP = COP_ERROR then
     begin
       if Length(Result.Data) > 0 then
-        RaiseError(Format('Device error EEh, code %02X: %s',
-          [Result.Data[0], ErrorDescription(Result.Data[0])]))
+        RaiseDeviceError(Format('Device error EEh, code %02X: %s', [Result.Data[0], ErrorDescription(Result.Data[0])]))
       else
-        RaiseError('Device error EEh');
+        RaiseDeviceError('Device error EEh');
     end;
 
     { 6. Неподдерживаемая команда (FDh) }
     if Result.COP = COP_UNSUPPORTED then
-      RaiseError(Format('The %02Xh command is not supported by the device', [aCOP]));
+      RaiseProtocolError(Format('The %02Xh command is not supported by the device', [aCOP]));
 
     { 7. COP ответа совпадает с запросом }
     if Result.COP <> aCOP then
-      RaiseError(Format('Response with the code %02Xh instead of %02Xh',
-        [Result.COP, aCOP]));
+      RaiseProtocolError(Format('Response with the code %02Xh instead of %02Xh', [Result.COP, aCOP]));
 
     Exit; { Успех }
   end;
@@ -393,7 +416,7 @@ begin
     Result := DecodeWeight(aPF.Data);
   except
     on E: Exception do
-      RaiseError(Format('GROSS weight analysis error: %s', [E.Message]));
+      RaiseFrameError(Format('GROSS weight analysis error: %s', [E.Message]));
   end;
 end;
 
@@ -406,22 +429,19 @@ begin
     Result := DecodeWeight(aPF.Data);
   except
     on E: Exception do
-      RaiseError(Format('Error in analyzing the NET weight: %s', [E.Message]));
+      RaiseFrameError(Format('Error in analyzing the NET weight: %s', [E.Message]));
   end;
 end;
 
-function TTensoMDevice.Tare: Boolean;
+procedure TTensoMDevice.Tare;
 begin
   SendCommand(COP_ZERO);
-  Result := True;
 end;
 
 { === Конфигурация прибора === }
 
-function TTensoMDevice.GetDeviceConfig(out aMaxWeight: Double;
-  out aDivision: Double; out aDecimalPlaces: Integer;
-  out aDeviceMode: string; out aADCFreqCode: Byte;
-  out aFilterCode: Byte): Boolean;
+procedure TTensoMDevice.GetDeviceConfig(out aMaxWeight: Double; out aDivision: Double; out aDecimalPlaces: Integer; out
+  aDeviceMode: string; out aADCFreqCode: Byte; out aFilterCode: Byte);
 var
   aPF: TParsedFrame;
   aMaxRaw, aDivRaw: Int64;
@@ -439,7 +459,7 @@ begin
 
   aPF := SendCommand(COP_GET_SETTINGS);
   if Length(aPF.Data) < 9 then
-    RaiseError(Format('Incomplete response C1h: %d byte(s)', [Length(aPF.Data)]));
+    RaiseFrameError(Format('Incomplete response C1h: %d byte(s)', [Length(aPF.Data)]));
 
   { L0,L1,L2 — максимальный предел взвешивания, BCD }
   aMaxRaw := DecodePackedBCD(Copy(aPF.Data, 0, 3));
@@ -472,11 +492,9 @@ begin
   { Filtr — фильтр (байт 8) }
   if Length(aPF.Data) >= 9 then
     aFilterCode := aPF.Data[8];
-
-  Result := True;
 end;
 
-function TTensoMDevice.SetBaudRate(aRateCode: Byte): Boolean;
+procedure TTensoMDevice.SetBaudRate(aRateCode: Byte);
 var
   aData: TBytes = nil;
   aBaudRate: LongInt;
@@ -492,29 +510,25 @@ begin
   { Только после получения корректного ответа
     переводим локальный COM-порт }
   if not fTransport.SetBaudRate(aBaudRate) then
-    RaiseError('incorrect bauderate command');
-
-  Result := True;
+    RaiseTransportError('incorrect bauderate command');
 end;
 
-function TTensoMDevice.SetFilter(aFilterCode: Byte): Boolean;
+procedure TTensoMDevice.SetFilter(aFilterCode: Byte);
 var
   aData: TBytes = nil;
 begin
   SetLength(aData, 1);
   aData[0] := aFilterCode;
   SendCommand(COP_SET_FILTER, aData);
-  Result := True;
 end;
 
-function TTensoMDevice.SetADCFrequency(aFreqCode: Byte): Boolean;
+procedure TTensoMDevice.SetADCFrequency(aFreqCode: Byte);
 var
   aData: TBytes = nil;
 begin
   SetLength(aData, 1);
   aData[0] := aFreqCode;
   SendCommand(COP_SET_ADC_FREQ, aData);
-  Result := True;
 end;
 
 { === Системная информация === }
@@ -525,7 +539,7 @@ var
 begin
   aPF := SendCommand(COP_GET_SERIAL);
   if Length(aPF.Data) < 3 then
-    RaiseError('Incomplete serial number');
+    RaiseFrameError('Incomplete serial number');
 
   { SN2 — старший, SN0 — младший (передаются в порядке SN2,SN1,SN0) }
   Result := Cardinal(aPF.Data[0]) shl 16
@@ -539,20 +553,22 @@ var
 begin
   aPF := SendCommand(COP_GET_STATUS);
   if Length(aPF.Data) < 1 then
-    RaiseError('Empty status');
+    RaiseFrameError('Empty status');
   Result := aPF.Data[0];
 end;
 
-function TTensoMDevice.SetNetworkAddress(aNewAddr: Byte): Boolean;
+procedure TTensoMDevice.SetNetworkAddress(aNewAddr: Byte);
 var
   aData: TBytes = nil;
 begin
   if (aNewAddr < $01) or (aNewAddr > $9F) then
-    RaiseError('The address must be between $01 and $9F');
+  begin
+    fLastError := 'The address must be between $01 and $9F';
+    raise EArgumentOutOfRangeException.Create(fLastError);
+  end;
   SetLength(aData, 1);
   aData[0] := aNewAddr;
   SendCommand(COP_SET_ADDRESS, aData);
-  Result := True;
 end;
 
 { === Дискретные входы/выходы === }
@@ -573,15 +589,14 @@ begin
   Result := Copy(aPF.Data, 0, Length(aPF.Data));
 end;
 
-function TTensoMDevice.SetDiscreteOutputs(const aValue: TBytes): Boolean;
+procedure TTensoMDevice.SetDiscreteOutputs(const aValue: TBytes);
 begin
   SendCommand(COP_SET_DISC_OUT, aValue);
-  Result := True;
 end;
 
 { === Индикаторы и клавиатура === }
 
-function TTensoMDevice.GetIndicators(out aText: string; out aFlags: Byte): Boolean;
+procedure TTensoMDevice.GetIndicators(out aText: string; out aFlags: Byte);
 var
   aPF: TParsedFrame;
   I: Integer;
@@ -591,7 +606,7 @@ begin
 
   aPF := SendCommand(COP_GET_DISPLAY);
   if Length(aPF.Data) < 1 then
-    RaiseError('An empty indicator response');
+    RaiseFrameError('An empty indicator response');
 
   { Последний байт — флаги (L), остальные — символы ASCII }
   if Length(aPF.Data) >= 2 then
@@ -599,7 +614,6 @@ begin
       aText := aText + Char(aPF.Data[I]);
 
   aFlags := aPF.Data[High(aPF.Data)];
-  Result := True;
 end;
 
 function TTensoMDevice.GetProductCode: string;
@@ -646,37 +660,34 @@ end;
 
 { === Дозирование === }
 
-function TTensoMDevice.DosingControl(aCmd: Byte): Boolean;
+procedure TTensoMDevice.DosingControl(aCmd: Byte);
 var
   aData: TBytes = nil;
 begin
   SetLength(aData, 1);
   aData[0] := aCmd;
   SendCommand(COP_DOSING_CTRL, aData);
-  Result := True;
 end;
 
 { === Инициативная передача === }
 
-function TTensoMDevice.StartInitTransmit(aCOP: Byte): Boolean;
+procedure TTensoMDevice.StartInitTransmit(aCOP: Byte);
 var
   aData: TBytes = nil;
 begin
   SetLength(aData, 1);
   aData[0] := aCOP;
   SendCommand(COP_START_INIT_SEND, aData);
-  Result := True;
 end;
 
-function TTensoMDevice.StopInitTransmit: Boolean;
+procedure TTensoMDevice.StopInitTransmit;
 begin
   SendCommand(COP_STOP_INIT_SEND);
-  Result := True;
 end;
 
 { === Отображение === }
 
-function TTensoMDevice.DisplayMessage(aDeviceNum: Byte; const aMsg: string): Boolean;
+procedure TTensoMDevice.DisplayMessage(aDeviceNum: Byte; const aMsg: string);
 var
   aData: TBytes = nil;
   I: Integer;
@@ -686,13 +697,11 @@ begin
   for I := 1 to Length(aMsg) do
     aData[I] := Byte(aMsg[I]);
   SendCommand(COP_DISPLAY_MSG, aData);
-  Result := True;
 end;
 
-function TTensoMDevice.SetDisplayWeightMode: Boolean;
+procedure TTensoMDevice.SetDisplayWeightMode;
 begin
   SendCommand(COP_SET_DISPLAY_MODE);
-  Result := True;
 end;
 
 { === Диагностика === }
@@ -708,7 +717,7 @@ begin
     GetBruttoWeight;
     Result := True; { Ответили без CRC }
   except
-    on E: Exception do
+    on E: ETensoMError do
     begin
       { Не ответили без CRC — пробуем с CRC }
       fUseCRC := True;
@@ -716,11 +725,11 @@ begin
         GetBruttoWeight;
         Result := True; { Ответили с CRC }
       except
-        on E2: Exception do
+        on E2: ETensoMError do
         begin
           { Ни один режим не сработал — восстанавливаем и выходим }
           fUseCRC := aSavedCRC;
-          RaiseError(Format('Device does not respond: without CRC: %s; with CRC: %s',
+          RaiseTimeoutError(Format('Device does not respond: without CRC: %s; with CRC: %s',
             [E.Message, E2.Message]));
         end;
       end;
