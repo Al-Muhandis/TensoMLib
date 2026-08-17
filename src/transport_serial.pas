@@ -33,6 +33,7 @@ type
     fDataBits: Byte;
     fParity: Char;
     fStopBits: Byte;
+    fBaudRate: LongInt; { Хранение текущей скорости }
   public
     destructor Destroy; override;
     function Connect(const aPortName: string; aBaudRate: LongInt; aDataBits: Byte = 8; aParity: Char = 'N';
@@ -81,25 +82,41 @@ type
     wReserved1: Word;
   end;
 
+  { COMMTIMEOUTS — 5 DWORD = 20 байт }
+  TCommTimeoutsRecord = packed record
+    ReadIntervalTimeout: DWORD;         { Max time between two chars, ms }
+    ReadTotalTimeoutMultiplier: DWORD;  { Multiplier for chars to read }
+    ReadTotalTimeoutConstant: DWORD;     { Constant add to read timeout, ms }
+    WriteTotalTimeoutMultiplier: DWORD;  { Multiplier for chars to write }
+    WriteTotalTimeoutConstant: DWORD;     { Constant add to write timeout, ms }
+  end;
+
 function WinGetCommState(h: THandle; var aDCB: TDCBRecord): BOOL; stdcall; external 'kernel32.dll' name 'GetCommState';
 function WinSetCommState(h: THandle; var aDCB: TDCBRecord): BOOL; stdcall; external 'kernel32.dll' name 'SetCommState';
-function WinSetCommTimeouts(h: THandle; aReadIntervalTimeout, aReadTotalTimeoutMultiplier, aReadTotalTimeoutConstant,
-  aWriteTotalTimeoutMultiplier, aWriteTotalTimeoutConstant: DWORD): BOOL; stdcall;
+function WinSetCommTimeouts(h: THandle; var aTimeouts: TCommTimeoutsRecord): BOOL; stdcall;
   external 'kernel32.dll' name 'SetCommTimeouts';
 
 function ConfigureDCBDirect(aHandle: THandle; aBaudRate: LongInt; aDataBits: Byte; aParity: Char;
-  aStopBits: Byte): string;
+  aStopBits: Byte; aTimeoutMS: Cardinal): string;
 var
   aDCB: TDCBRecord;
   aParityVal: Byte;
+  aTimeouts: TCommTimeoutsRecord;
+  aErrorCode: DWORD;
 begin
   Result := EmptyStr;
   Initialize(aDCB);
   aDCB.DCBlength := SizeOf(aDCB);
+
   if not WinGetCommState(aHandle, aDCB) then
-    Exit('GetCommState failed');
+  begin
+    aErrorCode := GetLastError;
+    Exit('GetCommState failed (Err:' + IntToStr(aErrorCode) + ')');
+  end;
+
   aDCB.BaudRate := DWORD(aBaudRate);
   aDCB.ByteSize := aDataBits;
+
   case aParity of
     'E': aParityVal := 2;  { EVENPARITY }
     'O': aParityVal := 1;  { ODDPARITY }
@@ -107,24 +124,42 @@ begin
     aParityVal := 0;  { NOPARITY }
   end;
   aDCB.Parity := aParityVal;
+
   case aStopBits of
     2: aDCB.StopBits := 2; { TWOSTOPBITS }
   else
     aDCB.StopBits := 0; { ONESTOPBIT }
   end;
+
   { fBinary($01) + DTR_CONTROL_ENABLE($10) + RTS_CONTROL_ENABLE($1000) }
   aDCB.Flags := $00000001 or $00000010 or $00001000;
+
   if not WinSetCommState(aHandle, aDCB) then
-    Exit('SetCommState failed');
-  { SetCommTimeouts
-      ReadIntervalTimeout=50:        максимальное время ожидания между двумя последовательными байтами.
-      ReadTotalTimeoutConstant=250:  общее время ожидания чтения в мс.
-      WriteTotalTimeoutConstant=500: общее время ожидания записи в мс.
-      Без этого RecvBuffer может зависнуть на неопределенный срок после сбоя SynSer Config(),
-      потому что тайм-ауты синхронизации никогда не применялись. }
-  if not WinSetCommTimeouts(aHandle, 50, 0, 250, 0, 500) then
-    Exit('SetCommTimeouts failed');
-  Result:=EmptyStr;
+  begin
+    aErrorCode := GetLastError;
+    Exit('SetCommState failed (Err:' + IntToStr(aErrorCode) + ')');
+  end;
+
+  { Настройка таймаутов:
+    ReadIntervalTimeout = MAXDWORD: Отключает интервальный таймаут. Чтение завершится только когда:
+      - Прочитано запрошенное количество байт ИЛИ
+      - Истек ReadTotalTimeoutConstant.
+    ReadTotalTimeoutMultiplier = 0: Не добавляем время за каждый байт.
+    ReadTotalTimeoutConstant = aTimeoutMS: Ждем ответа максимум указанное время.
+  }
+  aTimeouts.ReadIntervalTimeout        := MAXDWORD; { MAXDWORD  DWORD($FFFFFFFF) }
+  aTimeouts.ReadTotalTimeoutMultiplier := 0;
+  aTimeouts.ReadTotalTimeoutConstant   := aTimeoutMS;
+  aTimeouts.WriteTotalTimeoutMultiplier := 0;
+  aTimeouts.WriteTotalTimeoutConstant  := 5000; { 5 секунд на запись }
+
+  if not WinSetCommTimeouts(aHandle, aTimeouts) then
+  begin
+    aErrorCode := GetLastError;
+    Exit('SetCommTimeouts failed (Err:' + IntToStr(aErrorCode) + ')');
+  end;
+
+  Result := EmptyStr;
 end;
 
 {$ENDIF}
@@ -173,7 +208,7 @@ function TSerialTransport.Connect(const aPortName: string; aBaudRate: LongInt; a
         aConfigError := aSer.LastErrorDesc;
         {$IFDEF MSWINDOWS}
         { Запасной вариант: прямая настройка DCB для исправления ошибок в стандартных драйверах }
-        aConfigError := ConfigureDCBDirect(aSer.Handle, ABaudRate, ADataBits, AParity, AStopBits);
+        aConfigError := ConfigureDCBDirect(aSer.Handle, ABaudRate, ADataBits, AParity, AStopBits, 1000);
         if aConfigError <> '' then
         begin
           fLastError := Format('Configuration error %s: %s (SynSer: %s)',
@@ -191,9 +226,10 @@ function TSerialTransport.Connect(const aPortName: string; aBaudRate: LongInt; a
       aSer.Purge;
       fSerial := aSer;
       fPortName := aPortName;
+      fBaudRate := aBaudRate;
       fDataBits := aDataBits;
       fParity := aParityChar;
-      fStopBits := aStopBits;  
+      fStopBits := aStopBits;
       fConnected := True;
     finally
       { Если не подключились - освобождаем }
@@ -233,6 +269,7 @@ begin
   fDataBits := 0;
   fParity := #0;
   fStopBits := 0;
+  fBaudRate := 0;
   fConnected := False;
 end;
 
@@ -277,6 +314,9 @@ function TSerialTransport.Receive(aTimeoutMS: Cardinal): TBytes;
 var
   aBuf: TBytes = nil;
   aReadCount: Integer;
+  {$IFDEF MSWINDOWS}
+  aErr: string;
+  {$ENDIF}
 begin
   Result := nil;
   fLastError := EmptyStr;
@@ -285,6 +325,18 @@ begin
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
   try
     fSerial.DeadlockTimeout := aTimeoutMS;
+
+    {$IFDEF MSWINDOWS}
+    { Критическое исправление: применяем таймауты WinAPI перед чтением,
+      так как SynSer может их сбрасывать или игнорировать }
+    aErr := ConfigureDCBDirect(fSerial.Handle, fBaudRate, fDataBits, fParity, fStopBits, aTimeoutMS);
+    if aErr <> '' then
+    begin
+      fLastError := 'Failed to set read timeouts: ' + aErr;
+      Exit;
+    end;
+    {$ENDIF}
+
     SetLength(aBuf, 256);
     aReadCount := fSerial.RecvBuffer(@aBuf[0], 256);
 
@@ -351,15 +403,20 @@ begin
 
     if fSerial.LastError = 0 then
     begin
+      fBaudRate := aBaudRate;
       Result := True;
       Exit;
     end;
 
 {$IFDEF MSWINDOWS}
     { Fallback для драйверов, с которыми SynSer Config() не работает }
-    fLastError := ConfigureDCBDirect(fSerial.Handle, aBaudRate, fDataBits, fParity, fStopBits);
+    fLastError := ConfigureDCBDirect(fSerial.Handle, aBaudRate, fDataBits, fParity, fStopBits, 1000);
 
-    Result := fLastError = '';
+    if fLastError = '' then
+    begin
+      fBaudRate := aBaudRate;
+      Result := True;
+    end;
 {$ELSE}
     fLastError := fSerial.LastErrorDesc;
 {$ENDIF}
