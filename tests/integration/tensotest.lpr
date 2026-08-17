@@ -12,6 +12,7 @@ program tensotest;
     tensotest /dev/ttyUSB0 1
 
   Создает XML-отчет: tensotest_<порт>_<временная метка>.xml
+  Создает лог кадров: tensotest_<порт>_<временная метка>.log
   Только безопасные команды только для чтения - не изменяет состояние устройства.
 
   Не гарантируется, что все тесты, помеченные как "необязательные", будут поддерживаться
@@ -30,26 +31,38 @@ uses
   ;
 
 const
-  APP_VERSION = '1.1';
+  APP_VERSION = '1.2';
   DEFAULT_ADDRESS = 1;
   DEFAULT_TIMEOUT = 3000; { мс }
   WEIGHT_READINGS = 5;
   COUNTER_MIN = 0;
   COUNTER_MAX = 9;
 
+type
+
+  { TFrameLogger }
+
+  TFrameLogger = class
+  private
+    procedure HandleFrameLog(aDirection: TFrameDirection; const aFrameHex: string);
+  end;
+
 var
   F: TextFile;
+  FLog: TextFile;
   Dev: TTensoMDevice;
   Trans: TSerialTransport;
   TestPort: string;
   TestAddr: Byte;
   TestTimeout: Cardinal;
   ReportFilename: string;
+  LogFilename: string;
   TotalTests: Integer = 0;
   PassCount: Integer = 0;
   FailCount: Integer = 0;
   SkipCount: Integer = 0;
   StartTime: TDateTime;
+  FrameLogger: TFrameLogger;
 
 { --- Helpers --- }
 
@@ -78,6 +91,31 @@ end;
 function MsElapsed: Int64;
 begin
   Result := MilliSecondsBetween(Now, StartTime);
+end;
+
+{ === Логирование кадров === }
+
+procedure TFrameLogger.HandleFrameLog(aDirection: TFrameDirection; const aFrameHex: string);
+var
+  aDirStr: string;
+begin
+  if aDirection = fdSend then
+    aDirStr := '>>'
+  else
+    aDirStr := '<<';
+  WriteLn(FLog, Format('[%8d ms] %s %s', [MsElapsed, aDirStr, aFrameHex]));
+end;
+
+{ Возвращает суффикс с ошибкой транспорта, если она есть }
+function TransportErrSuffix: string;
+var
+  aErr: string;
+begin
+  aErr := Trans.GetLastErrorMessage;
+  if aErr <> '' then
+    Result := ' [transport: ' + aErr + ']'
+  else
+    Result := '';
 end;
 
 { Record a single test result. aOptional: if True, failures are recorded as SKIP }
@@ -154,7 +192,7 @@ begin
   except
     on E: Exception do
     begin
-      aErrMsg := E.Message;
+      aErrMsg := E.Message + TransportErrSuffix;
       aReqHex := Dev.LastRequestHex;
       aRespHex := Dev.LastResponseHex;
       RecordTest('Auto-detect CRC', 'C3h (probe)', False, '', aErrMsg, aReqHex, aRespHex);
@@ -174,7 +212,8 @@ begin
       Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   except
     on E: Exception do
-      RecordTest('Serial number', 'A1h', False, '', E.Message,
+      RecordTest('Serial number', 'A1h', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   end;
 end;
@@ -208,7 +247,8 @@ begin
     end;
   except
     on E: Exception do
-      RecordTest('Device configuration', 'C1h', False, '', E.Message,
+      RecordTest('Device configuration', 'C1h', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex);
   end;
 end;
@@ -228,7 +268,8 @@ begin
       Dev.LastRequestHex, Dev.LastResponseHex);
   except
     on E: Exception do
-      RecordTest('GROSS weight', 'C3h', False, '', E.Message,
+      RecordTest('GROSS weight', 'C3h', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex);
   end;
 end;
@@ -248,7 +289,8 @@ begin
       Dev.LastRequestHex, Dev.LastResponseHex);
   except
     on E: Exception do
-      RecordTest('NET weight', 'C2h', False, '', E.Message,
+      RecordTest('NET weight', 'C2h', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex);
   end;
 end;
@@ -275,7 +317,8 @@ begin
       Dev.LastRequestHex, Dev.LastResponseHex, aExtra, True);
   except
     on E: Exception do
-      RecordTest('System status', 'BFh', False, '', E.Message,
+      RecordTest('System status', 'BFh', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   end;
 end;
@@ -299,7 +342,8 @@ begin
       Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   except
     on E: Exception do
-      RecordTest('Discrete inputs', 'C4h', False, '', E.Message,
+      RecordTest('Discrete inputs', 'C4h', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   end;
 end;
@@ -323,7 +367,8 @@ begin
       Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   except
     on E: Exception do
-      RecordTest('Discrete outputs', 'C5h', False, '', E.Message,
+      RecordTest('Discrete outputs', 'C5h', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   end;
 end;
@@ -347,7 +392,8 @@ begin
     end;
   except
     on E: Exception do
-      RecordTest('Indicators', 'C6h', False, '', E.Message,
+      RecordTest('Indicators', 'C6h', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   end;
 end;
@@ -362,7 +408,8 @@ begin
       Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   except
     on E: Exception do
-      RecordTest('Product code', 'C7h', False, '', E.Message,
+      RecordTest('Product code', 'C7h', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   end;
 end;
@@ -393,7 +440,8 @@ begin
         Dev.LastRequestHex, Dev.LastResponseHex, '', aIsOpt);
     except
       on E: Exception do
-        RecordTest(Format('Counter #%d', [I]), 'C8h', False, '', E.Message,
+        RecordTest(Format('Counter #%d', [I]), 'C8h', False, '',
+          E.Message + TransportErrSuffix,
           Dev.LastRequestHex, Dev.LastResponseHex, '', aIsOpt);
     end;
   end;
@@ -418,7 +466,8 @@ begin
       Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   except
     on E: Exception do
-      RecordTest('Calibration parameters', 'CBh', False, '', E.Message,
+      RecordTest('Calibration parameters', 'CBh', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   end;
 end;
@@ -442,7 +491,8 @@ begin
       Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   except
     on E: Exception do
-      RecordTest('ADC code', 'CCh', False, '', E.Message,
+      RecordTest('ADC code', 'CCh', False, '',
+        E.Message + TransportErrSuffix,
         Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   end;
 end;
@@ -483,9 +533,12 @@ begin
         Inc(TotalTests);
         Inc(FailCount);
         XmlWrite('      <reading index="' + IntToStr(I) +
-          '" error="' + StringReplace(E.Message, '&', '&amp;', [rfReplaceAll]) +
+          '" error="' + StringReplace(
+            StringReplace(E.Message + TransportErrSuffix,
+              '&', '&amp;', [rfReplaceAll]),
+              '<', '&lt;', [rfReplaceAll]) +
           '" req="' + Dev.LastRequestHex + '" resp="' + Dev.LastResponseHex + '" />');
-        WriteProgress('    [' + IntToStr(I) + '] ERROR: ' + E.Message);
+        WriteProgress('    [' + IntToStr(I) + '] ERROR: ' + E.Message + TransportErrSuffix);
       end;
     end;
     Sleep(200);
@@ -514,7 +567,9 @@ begin
   WriteLn('  tensotest /dev/ttyUSB0 1 1000');
   {$ENDIF}
   WriteLn;
-  WriteLn('Output: tensotest_<port>_<timestamp>.xml');
+  WriteLn('Output:');
+  WriteLn('  tensotest_<port>_<timestamp>.xml  - test report');
+  WriteLn('  tensotest_<port>_<timestamp>.log   - frame-level log');
   WriteLn;
   WriteLn('Legend:');
   WriteLn('  PASS - test passed');
@@ -564,9 +619,14 @@ begin
   aPortSafe := StringReplace(aPortSafe, ':', '_', [rfReplaceAll]);
   ReportFilename := Format('tensotest_%s_%s.xml',
     [aPortSafe, FormatDateTime('yyyymmdd_hhnnss', Now)]);
+  LogFilename := Format('tensotest_%s_%s.log',
+    [aPortSafe, FormatDateTime('yyyymmdd_hhnnss', Now)]);
 
   AssignFile(F, ReportFilename);
   Rewrite(F);
+
+  AssignFile(FLog, LogFilename);
+  Rewrite(FLog);
 
   XmlWrite('<?xml version="1.0" encoding="UTF-8"?>');
   XmlWrite('<tensotest_report version="' + APP_VERSION + '">');
@@ -578,6 +638,12 @@ begin
   XmlWrite('    <timeout_ms>' + IntToStr(TestTimeout) + '</timeout_ms>');
   XmlWrite('  </environment>');
   XmlWrite('  <tests>');
+
+  WriteLn(FLog, '=== TensoMLib Frame Log v' + APP_VERSION + ' ===');
+  WriteLn(FLog, Format('Port: %s  Address: $%s  Timeout: %d ms',
+    [TestPort, IntToHex(TestAddr, 2), TestTimeout]));
+  WriteLn(FLog, Format('Started: %s', [FormatDateTime('yyyy-mm-dd hh:nn:ss', Now)]));
+  WriteLn(FLog, '---');
 end;
 
 procedure WriteReportFooter;
@@ -592,9 +658,15 @@ begin
   XmlWrite('  </summary>');
   XmlWrite('</tensotest_report>');
   CloseFile(F);
+
+  WriteLn(FLog, '---');
+  WriteLn(FLog, Format('Finished: %s  Total: %d  Passed: %d  Failed: %d  Skipped: %d  Elapsed: %d ms',
+    [FormatDateTime('yyyy-mm-dd hh:nn:ss', Now), TotalTests, PassCount, FailCount, SkipCount, MsElapsed]));
+  CloseFile(FLog);
 end;
 
 begin
+  FrameLogger:=TFrameLogger.Create;
   ParseArgs;
 
   WriteLn('=== TensoMLib Test Utility v' + APP_VERSION + ' ===');
@@ -615,6 +687,7 @@ begin
       WriteReportFooter;
       WriteLn;
       WriteLn('FATAL: Cannot open port. See ', ReportFilename);
+      WriteLn('Frame log: ', LogFilename);
       Trans.Free;
       Halt(2);
     end;
@@ -623,8 +696,8 @@ begin
     { --- Create device --- }
     Dev := TTensoMDevice.Create(Trans, TestAddr, True);
     Dev.ResponseTimeout := TestTimeout;
+    Dev.OnFrameLog := @FrameLogger.HandleFrameLog;
     try
-
       { --- Run tests --- }
 
       WriteProgress('[2/12] Auto-detect CRC...');
@@ -663,7 +736,7 @@ begin
       WriteProgress('[12/12] Multiple weight readings...');
       TestMultipleWeightReadings;
 
-    finally
+    finally;
       Dev.Free;
     end;
 
@@ -684,8 +757,10 @@ begin
   WriteLn(Format('  Time:    %d ms', [MsElapsed]));
   WriteLn;
   WriteLn('Report saved: ' + ReportFilename);
-  WriteLn('Please send this file to the developer.');
+  WriteLn('Frame log:    ' + LogFilename);
+  WriteLn('Please send these files to the developer.');
 
   if FailCount > 0 then
     Halt(3);
+  FrameLogger.Free;
 end.
