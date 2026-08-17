@@ -205,7 +205,7 @@ uses
 constructor TTensoMDevice.Create(aTransport: ITensoMTransport; aAddress: Byte; aUseCRC: Boolean);
 begin
   inherited Create;
-  if Assigned(aTransport) then
+  if not Assigned(aTransport) then
     raise EArgumentNilException.Create('Transport not assigned');
   fTransport := aTransport;
   fAddress := aAddress;
