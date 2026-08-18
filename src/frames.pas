@@ -243,11 +243,6 @@ begin
   aRaw  := nil;
   Result := False;
 
-  { Сохранить "сырые" байты }
-  SetLength(fRaw, Length(fRaw) + 1);
-  fRaw[High(fRaw)] := B;
-
-
   case fState of
     { --------------------------------------------------------------- }
     { Ожидание начала кадра                                           }
