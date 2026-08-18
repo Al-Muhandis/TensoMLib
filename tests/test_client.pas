@@ -538,7 +538,7 @@ var
   aMaxW, aDiv_: Double;
   aDecimals: Integer;
   aMode: string;
-  aADCFreq, aFilt: Byte;
+  aADCFreq, aFilt, aVSEN: Byte;
 begin
   SetupMock(True);
   try
@@ -561,13 +561,14 @@ begin
     aRespFrame := BuildFrame($01, COP_GET_SETTINGS, aData, True);
     fMock.QueueResponse(aRespFrame);
 
-    fDev.GetDeviceConfig(aMaxW, aDiv_, aDecimals, aMode, aADCFreq, aFilt);
+    fDev.GetDeviceConfig(aMaxW, aDiv_, aDecimals, aMode, aADCFreq, aVSEN, aFilt);
 
     AssertEquals('MaxWeight', 5000.0, aMaxW, 0.001); { 50000 / 10^1 }
     AssertEquals('Division', 5.0, aDiv_, 0.001);    { 50 / 10^1 }
     AssertEquals('Decimals', 1, aDecimals);
     AssertEquals('Mode', 'GROSS', aMode);
     AssertEquals('ADCFreq', $04, aADCFreq);
+    AssertEquals('VSEN', $00, aVSEN);
     AssertEquals('Filter', $05, aFilt);
   finally
     fDev.Free;

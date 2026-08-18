@@ -111,8 +111,8 @@ type
 
     { Передать настройку параметров (C1h).
       Возвращает: MaxWeight, Division, DecimalPlaces, DeviceMode, ADCFreqCode, FilterCode. }
-    procedure GetDeviceConfig(out aMaxWeight: Double; out aDivision: Double; out aDecimalPlaces: Integer;
-      out aDeviceMode: string; out aADCFreqCode: Byte; out aFilterCode: Byte);
+    procedure GetDeviceConfig(out aMaxWeight: Double; out aDivision: Double; out aDecimalPlaces: Integer; out
+      aDeviceMode: string; out aADCFreqCode: Byte; out aVSEN: Byte; out aFilterCode: Byte);
 
     { Установить скорость обмена (DBh). }
     procedure SetBaudRate(aRateCode: Byte);
@@ -441,7 +441,7 @@ end;
 { === Конфигурация прибора === }
 
 procedure TTensoMDevice.GetDeviceConfig(out aMaxWeight: Double; out aDivision: Double; out aDecimalPlaces: Integer; out
-  aDeviceMode: string; out aADCFreqCode: Byte; out aFilterCode: Byte);
+  aDeviceMode: string; out aADCFreqCode: Byte; out aVSEN: Byte; out aFilterCode: Byte);
 var
   aPF: TParsedFrame;
   aMaxRaw, aDivRaw: Int64;
@@ -449,22 +449,20 @@ var
   aDivisor: Double;
   I: Integer;
 begin
-  { Инициализация выходных параметров }
   aMaxWeight := 0;
   aDivision := 0;
   aDecimalPlaces := 0;
   aDeviceMode := '';
   aADCFreqCode := 0;
+  aVSEN := 0;
   aFilterCode := 0;
 
   aPF := SendCommand(COP_GET_SETTINGS);
-  if Length(aPF.Data) < 9 then
+  { минимально нужно L0..N, чтобы вообще что-то посчитать }
+  if Length(aPF.Data) < 4 then
     RaiseFrameError(Format('Incomplete response C1h: %d byte(s)', [Length(aPF.Data)]));
 
-  { L0,L1,L2 — максимальный предел взвешивания, BCD }
   aMaxRaw := DecodePackedBCD(Copy(aPF.Data, 0, 3));
-
-  { N — количество знаков после запятой (биты 0-2), режим (бит 5) }
   aDecimals := Integer(aPF.Data[3] and $07);
   aDecimalPlaces := aDecimals;
   if (aPF.Data[3] and $20) <> 0 then
@@ -472,26 +470,25 @@ begin
   else
     aDeviceMode := 'NET'; // = НЕТТО
 
-  { aDivisor для перевода BCD в вещественное }
   aDivisor := 1.0;
   for I := 0 to aDecimals - 1 do
     aDivisor := aDivisor * 10.0;
   aMaxWeight := aMaxRaw / aDivisor;
 
-  { Dis0,Dis1 — дискретность, BCD }
   if Length(aPF.Data) >= 6 then
   begin
     aDivRaw := DecodePackedBCD(Copy(aPF.Data, 4, 2));
     aDivision := aDivRaw / aDivisor;
   end;
 
-  { Freq — частота АЦП (байт 6) }
   if Length(aPF.Data) >= 7 then
-    aADCFreqCode := aPF.Data[6];
+    aADCFreqCode := aPF.Data[6];       // Freq, индекс 6
 
-  { Filtr — фильтр (байт 8) }
+  if Length(aPF.Data) >= 8 then
+    aVSEN := aPF.Data[7];              // VSEN, индекс 7
+
   if Length(aPF.Data) >= 9 then
-    aFilterCode := aPF.Data[8];
+    aFilterCode := aPF.Data[8];        // Filtr, индекс 8 — теперь верно
 end;
 
 procedure TTensoMDevice.SetBaudRate(aRateCode: Byte);

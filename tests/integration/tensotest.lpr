@@ -223,18 +223,19 @@ var
   aMaxW, aDiv_: Double;
   aDecimals: Integer;
   aMode: string;
-  aADCFreq, aFilt: Byte;
+  aADCFreq, aFilt, aVSEN: Byte;
   aExtra: string;
 begin
   aExtra := '';
   try
-    Dev.GetDeviceConfig(aMaxW, aDiv_, aDecimals, aMode, aADCFreq, aFilt);
+    Dev.GetDeviceConfig(aMaxW, aDiv_, aDecimals, aMode, aADCFreq, aVSEN, aFilt);
     aExtra := '      <config>' + sLineBreak +
       '        <max_weight>' + FloatToStr(aMaxW) + '</max_weight>' + sLineBreak +
       '        <division>' + FloatToStr(aDiv_) + '</division>' + sLineBreak +
       '        <decimal_places>' + IntToStr(aDecimals) + '</decimal_places>' + sLineBreak +
       '        <mode>' + aMode + '</mode>' + sLineBreak +
       '        <adc_freq_code>' + IntToStr(aADCFreq) + '</adc_freq_code>' + sLineBreak +
+      '        <vsen_code>' + IntToStr(aVSEN) + '</vsen_code>' + sLineBreak +
       '        <filter_code>' + IntToStr(aFilt) + '</filter_code>' + sLineBreak +
       '      </config>';
     RecordTest('Device configuration', 'C1h', True,
