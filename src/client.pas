@@ -66,8 +66,12 @@ type
     procedure RaiseTimeoutError(const aMsg: string);
     procedure RaiseTransportError(const aMsg: string);
     function SendCommand(aCOP: Byte; const aData: TBytes = nil): TParsedFrame;
+    procedure SendRequestOnce(const aReqFrame: TBytes);
+    function ReceiveResponseOnce: TParsedFrame;
+    procedure ClassifyResponse(const aParsed: TParsedFrame; aCOP: Byte);
     procedure DoFrameLog(aDirection: TFrameDirection; const aHex: string);
     function IsRetryableException(E: Exception): Boolean;
+
   public
     constructor Create(aTransport: ITensoMTransport; aAddress: Byte; aUseCRC: Boolean = True);
 
@@ -259,19 +263,11 @@ begin
   Result := (E is ETensoMTransportError) or (E is ETensoMFrameError);
 end;
 
+{ === SendCommand: только оркестрация попыток === }
 function TTensoMDevice.SendCommand(aCOP: Byte; const aData: TBytes): TParsedFrame;
 var
   aReqFrame: TBytes;
-  aRawResp: TBytes;
-  aCollector: TFrameCollector;
-  J: Integer;
-  aBody, aRaw: TBytes;
-  aComplete: Boolean;
-  T0: QWord;
-  aPollInterval: Cardinal;
-  aAttempt, aMaxAttempts, aSent: Integer;
-  aLastErrMsg: string;
-  aParseOK: Boolean;
+  aAttempt, aMaxAttempts: Integer;
 begin
   fLastError := EmptyStr;
   Initialize(Result);
@@ -279,130 +275,133 @@ begin
   if not fTransport.IsConnected then
     RaiseTransportError('Transport is not connected');
 
-  { 1. Строим кадр запроса (не меняется между попытками) }
+  { Кадр запроса не меняется между попытками }
   aReqFrame := BuildFrame(fAddress, aCOP, aData, fUseCRC);
   fLastRequestHex := HexBytes(aReqFrame);
 
   aMaxAttempts := 1 + fRetryCount;
-  aLastErrMsg := EmptyStr;
 
   for aAttempt := 1 to aMaxAttempts do
   begin
-    aParseOK := False;
     try
-      { 2. Очищаем входной буфер и отправляем }
-      fTransport.Flush;
-
-      aSent := fTransport.Send(aReqFrame);
-      if aSent <> Length(aReqFrame) then
+      SendRequestOnce(aReqFrame);
+      Result := ReceiveResponseOnce;
+    except
+      { Повторяем только ошибки, явно классифицированные как повторяемые (см. IsRetryableException):
+          ETensoMTransportError и ETensoMFrameError.
+        Семантические (ETensoMDeviceError, ETensoMProtocolError) и любые
+        прочие ошибки пробрасываются выше без повтора. }
+      on E: ETensoMError do
       begin
-        aLastErrMsg := Format('Failed to send complete frame: %d of %d bytes. %s',
-          [aSent, Length(aReqFrame), fTransport.GetLastErrorMessage]);
-
-        if aAttempt < aMaxAttempts then
+        if IsRetryableException(E) and (aAttempt < aMaxAttempts) then
         begin
           if fRetryDelayMS > 0 then
             Sleep(fRetryDelayMS);
           Continue;
         end;
 
-        RaiseTransportError(aLastErrMsg);
-      end;
-
-      DoFrameLog(fdSend, fLastRequestHex);
-
-      { 3. Читаем ответ с таймаутом }
-      aCollector := TFrameCollector.Create;
-      try
-        T0 := GetTickCount64;
-        aPollInterval := 50; { мс между попытками чтения }
-
-        while (GetTickCount64 - T0) < Cardinal(fResponseTimeout) do
-        begin
-          aRawResp := fTransport.Receive(aPollInterval);
-          if Length(aRawResp) = 0 then
-            Continue;
-
-          for J := 0 to High(aRawResp) do
-          begin
-            aComplete := aCollector.Feed(aRawResp[J], aBody, aRaw);
-            if not aComplete then Continue;
-
-            fLastResponseHex := HexBytes(aRaw);
-            DoFrameLog(fdReceive, fLastResponseHex);
-
-            { 4. Разбираем payload (может бросить исключение при CRC-ошибке) }
-            Result := ParseFrame(aBody, aRaw, fAddress, fUseCRC);
-            aParseOK := True;
-            Break; { кадр получен и разобран — выходим из цикла опроса }
-          end;
-          if aParseOK then Break;
-        end;
-
-        if not aParseOK then
-        begin
-          { Таймаут — повторяемая ошибка }
-          fLastResponseHex := '';
-          aLastErrMsg := 'Device response timeout';
-          if aAttempt < aMaxAttempts then
-          begin
-            if fRetryDelayMS > 0 then
-              Sleep(fRetryDelayMS);
-            Continue;
-          end;
-          RaiseTimeoutError(aLastErrMsg);
-        end;
-
-      finally
-        aCollector.Free;
-      end;
-
-    except
-      { Повторяем только ошибки, явно классифицированные как повторяемые
-        (см. IsRetryableException): ETensoMTransportError и ETensoMFrameError.
-        Семантические (ETensoMDeviceError, ETensoMProtocolError) и любые
-        прочие ошибки пробрасываются выше без повтора. }
-      on E: ETensoMError do
-      begin
-        if IsRetryableException(E) then
-        begin
-          aLastErrMsg := E.Message;
-
-          if aAttempt < aMaxAttempts then
-          begin
-            if fRetryDelayMS > 0 then
-              Sleep(fRetryDelayMS);
-            Continue;
-          end;
-        end;
-
         raise;
       end;
     end;
 
-    { === Проверки ответа (смысловые ошибки — НЕ повторяемые) === }
-    { Сюда попадаем только при успешно разобранном кадре (aParseOK = True).
-      Прибор ответил корректно, но семантически это ошибка — повтор не поможет. }
-
-    { 5. Ошибка прибора (EEh) }
-    if Result.COP = COP_ERROR then
-    begin
-      if Length(Result.Data) > 0 then
-        RaiseDeviceError(Format('Device error EEh, code %02X: %s', [Result.Data[0], ErrorDescription(Result.Data[0])]))
-      else
-        RaiseDeviceError('Device error EEh');
-    end;
-
-    { 6. Неподдерживаемая команда (FDh) }
-    if Result.COP = COP_UNSUPPORTED then
-      RaiseProtocolError(Format('The %02Xh command is not supported by the device', [aCOP]));
-
-    { 7. COP ответа совпадает с запросом }
-    if Result.COP <> aCOP then
-      RaiseProtocolError(Format('Response with the code %02Xh instead of %02Xh', [Result.COP, aCOP]));
-
+    { Сюда попадаем только при успешно разобранном кадре. Прибор ответил корректно, но семантически это может быть
+      ошибка — повтор здесь не поможет. }
+    ClassifyResponse(Result, aCOP);
     Exit; { Успех }
   end;
+end;
+
+{ Отправляет один кадр запроса. Кидает ETensoMTransportError при неполной отправке.
+  Логирует отправленный кадр при успехе. }
+procedure TTensoMDevice.SendRequestOnce(const aReqFrame: TBytes);
+var
+  aSent: Integer;
+begin
+  fTransport.Flush;
+
+  aSent := fTransport.Send(aReqFrame);
+  if aSent <> Length(aReqFrame) then
+    RaiseTransportError(Format('Failed to send complete frame: %d of %d bytes. %s',
+      [aSent, Length(aReqFrame), fTransport.GetLastErrorMessage]));
+
+  DoFrameLog(fdSend, fLastRequestHex);
+end;
+
+{ Опрашивает транспорт до получения и разбора одного кадра или до истечения fResponseTimeout.
+  Кидает ETensoMTimeoutError при таймауте; исключения ParseFrame (CRC/структура кадра) пробрасываются как есть.
+  Логирует полученный кадр при успехе. }
+function TTensoMDevice.ReceiveResponseOnce: TParsedFrame;
+var
+  aCollector: TFrameCollector;
+  aRawResp, aBody, aRaw: TBytes;
+  T0: QWord;
+  aPollInterval: Cardinal;
+  J: Integer;
+  aParseOK: Boolean;
+begin
+  Initialize(Result);
+  aParseOK := False;
+
+  aCollector := TFrameCollector.Create;
+  try
+    T0 := GetTickCount64;
+    aPollInterval := 50; { мс между попытками чтения }
+
+    while (GetTickCount64 - T0) < Cardinal(fResponseTimeout) do
+    begin
+      aRawResp := fTransport.Receive(aPollInterval);
+      if Length(aRawResp) = 0 then
+        Continue;
+
+      for J := 0 to High(aRawResp) do
+      begin
+        if not aCollector.Feed(aRawResp[J], aBody, aRaw) then
+          Continue;
+
+        fLastResponseHex := HexBytes(aRaw);
+        DoFrameLog(fdReceive, fLastResponseHex);
+
+        { Может бросить исключение при CRC-ошибке/некорректном адресе }
+        Result := ParseFrame(aBody, aRaw, fAddress, fUseCRC);
+        aParseOK := True;
+        Break;
+      end;
+
+      if aParseOK then Break;
+    end;
+  finally
+    aCollector.Free;
+  end;
+
+  if not aParseOK then
+  begin
+    fLastResponseHex := '';
+    RaiseTimeoutError('Device response timeout');
+  end;
+end;
+
+{ Проверяет уже успешно разобранный кадр на смысловые ошибки:
+  ответ прибора об ошибке (EEh), неподдерживаемую команду (FDh),
+  несовпадение COP ответа с запросом. Все ошибки здесь — НЕповторяемые. }
+procedure TTensoMDevice.ClassifyResponse(const aParsed: TParsedFrame; aCOP: Byte);
+begin
+  { Ошибка прибора (EEh) }
+  if aParsed.COP = COP_ERROR then
+  begin
+    if Length(aParsed.Data) > 0 then
+      RaiseDeviceError(Format('Device error EEh, code %02X: %s',
+        [aParsed.Data[0], ErrorDescription(aParsed.Data[0])]))
+    else
+      RaiseDeviceError('Device error EEh');
+  end;
+
+  { Неподдерживаемая команда (FDh) }
+  if aParsed.COP = COP_UNSUPPORTED then
+    RaiseProtocolError(Format('The %02Xh command is not supported by the device', [aCOP]));
+
+  { COP ответа совпадает с запросом }
+  if aParsed.COP <> aCOP then
+    RaiseProtocolError(Format('Response with the code %02Xh instead of %02Xh', [aParsed.COP, aCOP]));
 end;
 
 { === Весовые измерения === }
