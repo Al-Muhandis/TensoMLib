@@ -38,7 +38,7 @@ var
   aMaxW, aDiv_: Double;
   aDecimals: Integer;
   aMode: string;
-  aADCFreq, aFilt: Byte;
+  aADCFreq, aFilt, aVSEN: Byte;
   aData: TBytes = nil;
   aRespFrame: TBytes;
   aPorts: TStringArray;
@@ -105,14 +105,12 @@ begin
         { --- Конфигурация --- }
         Write('Configuration... ');
         try
-          if aDev.GetDeviceConfig(aMaxW, aDiv_, aDecimals, aMode, aADCFreq, aFilt) then
-          begin
-            WriteLn('OK');
-            WriteLn(Format('  Max. w: %.*f', [aDecimals, aMaxW]));
-            WriteLn(Format('  Div.: %.*f', [aDecimals, aDiv_]));
-            WriteLn('  Decimals: ', aDecimals);
-            WriteLn('  Mode: ', aMode);
-          end;
+          aDev.GetDeviceConfig(aMaxW, aDiv_, aDecimals, aMode, aADCFreq, aVSEN, aFilt);
+          WriteLn('OK');
+          WriteLn(Format('  Max. w: %.*f', [aDecimals, aMaxW]));
+          WriteLn(Format('  Div.: %.*f', [aDecimals, aDiv_]));
+          WriteLn('  Decimals: ', aDecimals);
+          WriteLn('  Mode: ', aMode);
         except
           on E: Exception do
             WriteLn('error: ', E.Message);
