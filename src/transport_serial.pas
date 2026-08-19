@@ -220,13 +220,13 @@ function TSerialTransport.Connect(const aPortName: string; aBaudRate: LongInt; a
       убираем все дешевые преобразователи, которые потенциально из-за ошибок в своих драйверах приносили кучу
       неприятностей"
       }
-      aSer.Config(ABaudRate, ADataBits, aParityChar, AStopBits, False, False);
+      aSer.Config(aBaudRate, aDataBits, aParityChar, AStopBits, False, False);
       if aSer.LastError <> 0 then
       begin
         aConfigError := aSer.LastErrorDesc;
         {$IFDEF MSWINDOWS}
         { Запасной вариант: прямая настройка DCB для исправления ошибок в стандартных драйверах }
-        aConfigError := ConfigureDCBDirect(aSer.Handle, ABaudRate, ADataBits, AParity, AStopBits, 1000);
+        aConfigError := ConfigureDCBDirect(aSer.Handle, aBaudRate, aDataBits, AParity, AStopBits, 1000);
         if aConfigError <> '' then
         begin
           fLastError := Format('Configuration error %s: %s (SynSer: %s)',
@@ -482,6 +482,7 @@ var
   I: Integer;
   aSR: TSearchRec;
 begin
+  Result := nil;
   SetLength(Result, 0);
   for I := 0 to High(PORT_PATTERNS) do
   begin
