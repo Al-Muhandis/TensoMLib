@@ -14,7 +14,7 @@ unit frames;
 interface
 
 uses
-  SysUtils, core, crc8, errors
+  SysUtils, core, crc8
   ;
 
 { Создайте фрейм (frame) для передачи.
@@ -63,6 +63,10 @@ type
 function ParseFrame(const aBody, aRaw: TBytes; aExpectedAddress: Byte; aUseCRC: Boolean): TParsedFrame;
 
 implementation
+
+uses
+  tensom_errors
+  ;
 
 { --- BuildFrame --- }
 

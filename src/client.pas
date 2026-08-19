@@ -201,7 +201,7 @@ type
 implementation
 
 uses
-  errors
+  tensom_errors
   ;
 
 { === Создание / уничтожение === }
