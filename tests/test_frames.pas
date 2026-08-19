@@ -60,7 +60,7 @@ type
 implementation
 
 uses
-  core in '../src/core.pas', errors
+  core in '../src/core.pas', tensom_errors
   ;
 
 { --- Вспомогательные функции --- }

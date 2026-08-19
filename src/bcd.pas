@@ -13,7 +13,7 @@ unit bcd;
 interface
 
 uses
-  SysUtils, core, errors
+  SysUtils, core
   ;
 
 { Декодировать массив упакованных BCD-байтов (little-endian) в целое число.
@@ -31,6 +31,10 @@ function EncodePackedBCD(aValue: Int64; aByteCount: Integer; out aBytes: TBytes)
 function DecodeWeight(const aData: TBytes): TWeightData;
 
 implementation
+
+uses
+  tensom_errors
+  ;
 
 function DecodePackedBCD(const aBytesLE: TBytes): Int64;
 var

@@ -97,7 +97,7 @@ type
 implementation
 
 uses
-  errors
+  tensom_errors
   ;
 
 type

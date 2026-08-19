@@ -1,4 +1,4 @@
-unit errors;
+unit tensom_errors;
 
 {
   TensoMLib — иерархия исключений.
@@ -23,14 +23,14 @@ unit errors;
 interface
 
 uses
-  SysUtils;
+  SysUtils
+  ;
 
 type
   { Базовая ошибка Tenso-M. }
   ETensoMError = class(Exception);
 
-  { Ошибка транспортного уровня:
-    COM/TTY, невозможность отправки, отсутствие соединения и т.п. }
+  { Ошибка транспортного уровня: COM/TTY, невозможность отправки, отсутствие соединения и т.п. }
   ETensoMTransportError = class(ETensoMError);
 
   { Таймаут ожидания ответа от прибора. }
@@ -45,8 +45,7 @@ type
   { Ошибка, возвращённая самим прибором через EEh. }
   ETensoMDeviceError = class(ETensoMError);
 
-  { Ошибка протокола/семантики обмена:
-    неверный адрес, неожиданный COP, неподдерживаемая команда и т.п. }
+  { Ошибка протокола/семантики обмена: неверный адрес, неожиданный COP, неподдерживаемая команда и т.п. }
   ETensoMProtocolError = class(ETensoMError);
 
 implementation
