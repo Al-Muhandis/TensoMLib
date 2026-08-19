@@ -465,6 +465,7 @@ var
   I: Integer;
   aSR: TSearchRec;
 begin
+  Result := nil;
   SetLength(Result, 0);
   for I := 0 to High(PORT_PATTERNS) do
   begin
