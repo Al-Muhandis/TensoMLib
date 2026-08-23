@@ -31,7 +31,7 @@ uses
   ;
 
 const
-  APP_VERSION = '1.3';
+  APP_VERSION = '1.4';
   DEFAULT_ADDRESS = 1;
   DEFAULT_TIMEOUT = 3000; { мс }
   WEIGHT_READINGS = 5;

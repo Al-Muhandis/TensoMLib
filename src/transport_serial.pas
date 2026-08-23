@@ -162,6 +162,24 @@ begin
   Result := EmptyStr;
 end;
 
+{ Устанавливает ТОЛЬКО COMMTIMEOUTS без изменения DCB (SetCommState).
+  Используется перед каждым RecvBuffer в Receive(), чтобы не трогать DCB.
+  Вызов SetCommState перед каждым чтением сбрасывает входной буфер
+  на некоторых драйверах (включая com0com виртуальные порты).
+  DCB настраивается один раз при Connect/SetBaudRate — менять его перед
+  каждым чтением не нужно. }
+function SetReadTimeoutsOnly(aHandle: THandle; aTimeoutMS: Cardinal): Boolean;
+var
+  aTimeouts: TCommTimeoutsRecord;
+begin
+  aTimeouts.ReadIntervalTimeout        := MAXDWORD;
+  aTimeouts.ReadTotalTimeoutMultiplier := 0;
+  aTimeouts.ReadTotalTimeoutConstant   := aTimeoutMS;
+  aTimeouts.WriteTotalTimeoutMultiplier := 0;
+  aTimeouts.WriteTotalTimeoutConstant  := 5000;
+  Result := WinSetCommTimeouts(aHandle, aTimeouts);
+end;
+
 {$ENDIF}
 
 destructor TSerialTransport.Destroy;
@@ -314,9 +332,6 @@ function TSerialTransport.Receive(aTimeoutMS: Cardinal): TBytes;
 var
   aBuf: TBytes = nil;
   aReadCount: Integer;
-  {$IFDEF MSWINDOWS}
-  aErr: string;
-  {$ENDIF}
 begin
   Result := nil;
   fLastError := EmptyStr;
@@ -327,12 +342,14 @@ begin
     fSerial.DeadlockTimeout := aTimeoutMS;
 
     {$IFDEF MSWINDOWS}
-    { Критическое исправление: применяем таймауты WinAPI перед чтением,
-      так как SynSer может их сбрасывать или игнорировать }
-    aErr := ConfigureDCBDirect(fSerial.Handle, fBaudRate, fDataBits, fParity, fStopBits, aTimeoutMS);
-    if aErr <> '' then
+  { Устанавливаем COMMTIMEOUTS перед чтением.
+    Важно: используем SetReadTimeoutsOnly (только SetCommTimeouts), а не ConfigureDCBDirect
+    (SetCommState + SetCommTimeouts).
+    SetCommState перед каждым чтением сбрасывает входной буфер на драйверах виртуальных портов (com0com).
+    DCB уже настроен при Connect — менять его перед каждым чтением не нужно. }
+    if not SetReadTimeoutsOnly(fSerial.Handle, aTimeoutMS) then
     begin
-      fLastError := 'Failed to set read timeouts: ' + aErr;
+      fLastError := 'Failed to set read timeouts (SetCommTimeouts)';
       Exit;
     end;
     {$ENDIF}

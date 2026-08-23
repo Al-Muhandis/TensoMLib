@@ -13,7 +13,7 @@
       </SearchPaths>
     </CompilerOptions>
     <License Value="MIT"/>
-    <Version Release="2"/>
+    <Version Release="3"/>
     <Files>
       <Item>
         <Filename Value="bcd.pas"/>
