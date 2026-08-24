@@ -82,26 +82,14 @@ type
     wReserved1: Word;
   end;
 
-  { COMMTIMEOUTS — 5 DWORD = 20 байт }
-  TCommTimeoutsRecord = packed record
-    ReadIntervalTimeout: DWORD;         { Max time between two chars, ms }
-    ReadTotalTimeoutMultiplier: DWORD;  { Multiplier for chars to read }
-    ReadTotalTimeoutConstant: DWORD;     { Constant add to read timeout, ms }
-    WriteTotalTimeoutMultiplier: DWORD;  { Multiplier for chars to write }
-    WriteTotalTimeoutConstant: DWORD;     { Constant add to write timeout, ms }
-  end;
-
 function WinGetCommState(h: THandle; var aDCB: TDCBRecord): BOOL; stdcall; external 'kernel32.dll' name 'GetCommState';
 function WinSetCommState(h: THandle; var aDCB: TDCBRecord): BOOL; stdcall; external 'kernel32.dll' name 'SetCommState';
-function WinSetCommTimeouts(h: THandle; var aTimeouts: TCommTimeoutsRecord): BOOL; stdcall;
-  external 'kernel32.dll' name 'SetCommTimeouts';
 
 function ConfigureDCBDirect(aHandle: THandle; aBaudRate: LongInt; aDataBits: Byte; aParity: Char;
-  aStopBits: Byte; aTimeoutMS: Cardinal): string;
+  aStopBits: Byte): string;
 var
   aDCB: TDCBRecord;
   aParityVal: Byte;
-  aTimeouts: TCommTimeoutsRecord;
   aErrorCode: DWORD;
 begin
   Result := EmptyStr;
@@ -138,25 +126,6 @@ begin
   begin
     aErrorCode := GetLastError;
     Exit('SetCommState failed (Err:' + IntToStr(aErrorCode) + ')');
-  end;
-
-  { Настройка таймаутов:
-    ReadIntervalTimeout = MAXDWORD: Отключает интервальный таймаут. Чтение завершится только когда:
-      - Прочитано запрошенное количество байт ИЛИ
-      - Истек ReadTotalTimeoutConstant.
-    ReadTotalTimeoutMultiplier = 0: Не добавляем время за каждый байт.
-    ReadTotalTimeoutConstant = aTimeoutMS: Ждем ответа максимум указанное время.
-  }
-  aTimeouts.ReadIntervalTimeout        := MAXDWORD; { MAXDWORD  DWORD($FFFFFFFF) }
-  aTimeouts.ReadTotalTimeoutMultiplier := 0;
-  aTimeouts.ReadTotalTimeoutConstant   := aTimeoutMS;
-  aTimeouts.WriteTotalTimeoutMultiplier := 0;
-  aTimeouts.WriteTotalTimeoutConstant  := 5000; { 5 секунд на запись }
-
-  if not WinSetCommTimeouts(aHandle, aTimeouts) then
-  begin
-    aErrorCode := GetLastError;
-    Exit('SetCommTimeouts failed (Err:' + IntToStr(aErrorCode) + ')');
   end;
 
   Result := EmptyStr;
@@ -208,7 +177,7 @@ function TSerialTransport.Connect(const aPortName: string; aBaudRate: LongInt; a
         aConfigError := aSer.LastErrorDesc;
         {$IFDEF MSWINDOWS}
         { Запасной вариант: прямая настройка DCB для исправления ошибок в стандартных драйверах }
-        aConfigError := ConfigureDCBDirect(aSer.Handle, ABaudRate, ADataBits, AParity, AStopBits, 1000);
+        aConfigError := ConfigureDCBDirect(aSer.Handle, ABaudRate, ADataBits, AParity, AStopBits);
         if aConfigError <> '' then
         begin
           fLastError := Format('Configuration error %s: %s (SynSer: %s)',
@@ -312,33 +281,17 @@ end;
 
 function TSerialTransport.Receive(aTimeoutMS: Cardinal): TBytes;
 var
-  aBuf: TBytes = nil;
-  aReadCount: Integer;
-  {$IFDEF MSWINDOWS}
-  aErr: string;
-  {$ENDIF}
+  aData: AnsiString;
 begin
   Result := nil;
   fLastError := EmptyStr;
-  if not fConnected then Exit;
+
+  if not fConnected then
+    Exit;
 
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
   try
-    fSerial.DeadlockTimeout := aTimeoutMS;
-
-    {$IFDEF MSWINDOWS}
-    { Критическое исправление: применяем таймауты WinAPI перед чтением,
-      так как SynSer может их сбрасывать или игнорировать }
-    aErr := ConfigureDCBDirect(fSerial.Handle, fBaudRate, fDataBits, fParity, fStopBits, aTimeoutMS);
-    if aErr <> '' then
-    begin
-      fLastError := 'Failed to set read timeouts: ' + aErr;
-      Exit;
-    end;
-    {$ENDIF}
-
-    SetLength(aBuf, 256);
-    aReadCount := fSerial.RecvBuffer(@aBuf[0], 256);
+    aData := fSerial.RecvPacket(aTimeoutMS);
 
     if fSerial.LastError <> 0 then
     begin
@@ -346,11 +299,11 @@ begin
       Exit;
     end;
 
-    if aReadCount > 0 then
-    begin
-      SetLength(Result, aReadCount);
-      Move(aBuf[0], Result[0], aReadCount);
-    end;
+    if Length(aData) = 0 then
+      Exit;
+
+    SetLength(Result, Length(aData));
+    Move(aData[1], Result[0], Length(aData));
   except
     on E: Exception do
       fLastError := E.Message;
@@ -410,7 +363,7 @@ begin
 
 {$IFDEF MSWINDOWS}
     { Fallback для драйверов, с которыми SynSer Config() не работает }
-    fLastError := ConfigureDCBDirect(fSerial.Handle, aBaudRate, fDataBits, fParity, fStopBits, 1000);
+    fLastError := ConfigureDCBDirect(fSerial.Handle, aBaudRate, fDataBits, fParity, fStopBits);
 
     if fLastError = '' then
     begin

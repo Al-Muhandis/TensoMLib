@@ -51,44 +51,11 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, StrUtils, Math,
   LazSynaSer, core, frames, mock_server
-  {$IFDEF MSWINDOWS}, windows{$ENDIF}
   ;
 
 const
   APP_VERSION = '1.3';
-  READ_BUF_SIZE = 256;
   RECV_TIMEOUT_MS = 100;
-
-{$IFDEF MSWINDOWS}
-{ WinAPI: COMMTIMEOUTS для корректной работы RecvBuffer
-  с виртуальными портами (com0com). SynSer может сбрасывать
-  или игнорировать таймауты чтения.
-  См. аналогичный код в transport_serial.pas (ConfigureDCBDirect). }
-
-type
-  TCommTimeoutsRec = packed record
-    ReadIntervalTimeout: DWORD;
-    ReadTotalTimeoutMultiplier: DWORD;
-    ReadTotalTimeoutConstant: DWORD;
-    WriteTotalTimeoutMultiplier: DWORD;
-    WriteTotalTimeoutConstant: DWORD;
-  end;
-
-function WinSetCommTimeouts(h: THandle; var aTimeouts: TCommTimeoutsRec): BOOL; stdcall;
-  external 'kernel32.dll' name 'SetCommTimeouts';
-
-procedure ApplyReadTimeout(aHandle: THandle; aTimeoutMS: Cardinal);
-var
-  aTimeouts: TCommTimeoutsRec;
-begin
-  aTimeouts.ReadIntervalTimeout        := DWORD($FFFFFFFF);
-  aTimeouts.ReadTotalTimeoutMultiplier := 0;
-  aTimeouts.ReadTotalTimeoutConstant   := aTimeoutMS;
-  aTimeouts.WriteTotalTimeoutMultiplier := 0;
-  aTimeouts.WriteTotalTimeoutConstant  := 5000;
-  WinSetCommTimeouts(aHandle, aTimeouts);
-end;
-{$ENDIF}
 
 var
   Mock: TMockDeviceTransport;
@@ -111,23 +78,25 @@ end;
 
 function IORead(out aBuf: TBytes; out aReadCount: Integer): Boolean;
 var
-  aRawBuf: array[0..READ_BUF_SIZE - 1] of Byte;
+  aData: AnsiString;
 begin
   aBuf := nil;
   aReadCount := 0;
   Result := False;
 
-  Serial.DeadlockTimeout := RECV_TIMEOUT_MS;
-  {$IFDEF MSWINDOWS}
-  ApplyReadTimeout(Serial.Handle, RECV_TIMEOUT_MS);
-  {$ENDIF}
-  aReadCount := Serial.RecvBuffer(@aRawBuf[0], READ_BUF_SIZE);
-  if (aReadCount > 0) and (Serial.LastError = 0) then
-  begin
-    SetLength(aBuf, aReadCount);
-    Move(aRawBuf[0], aBuf[0], aReadCount);
-    Result := True;
-  end;
+  aData := Serial.RecvPacket(RECV_TIMEOUT_MS);
+
+  if Serial.LastError <> 0 then
+    Exit;
+
+  if Length(aData) = 0 then
+    Exit;
+
+  aReadCount := Length(aData);
+  SetLength(aBuf, aReadCount);
+  Move(aData[1], aBuf[0], aReadCount);
+
+  Result := True;
 end;
 
 { === Автоопределение CRC === }
