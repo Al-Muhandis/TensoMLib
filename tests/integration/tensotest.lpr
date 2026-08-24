@@ -27,11 +27,11 @@ uses
   {$IFDEF UNIX}
   cthreads,
   {$ENDIF}
-  SysUtils, StrUtils, DateUtils, core, transport, transport_serial, client
+  SysUtils, StrUtils, DateUtils, core, transport_serial, client, FileInfo
   ;
 
 const
-  APP_VERSION = '1.3';
+  APP_VERSION = '1.5';
   DEFAULT_ADDRESS = 1;
   DEFAULT_TIMEOUT = 3000; { мс }
   WEIGHT_READINGS = 5;
@@ -63,6 +63,32 @@ var
   SkipCount: Integer = 0;
   StartTime: TDateTime;
   FrameLogger: TFrameLogger;
+
+{ --- Получение текущей версии приложения ---}
+function BuildVersion: String;
+var
+  FileVerInfo: TFileVersionInfo;
+begin
+  try
+    FileVerInfo:=TFileVersionInfo.Create(nil);
+    try
+      FileVerInfo.ReadFileInfo;
+      if FileVerInfo.VersionStrings.Count>0 then
+        Result:=FileVerInfo.VersionStrings.Values['FileVersion']
+      else
+        Result:=EmptyStr;
+    finally
+      FileVerInfo.Free;
+    end;
+  except
+    Result := EmptyStr;
+  end;
+end;
+
+function AppCaption: String;
+begin
+  Result := Format('TensoMLib Test Utility: v%s [deprecated], v%s', [APP_VERSION, BuildVersion])
+end;
 
 { --- Helpers --- }
 
@@ -544,7 +570,7 @@ end;
 
 procedure PrintUsage;
 begin
-  WriteLn('TensoMLib Test Utility v' + APP_VERSION);
+  WriteLn(AppCaption);
   WriteLn;
   WriteLn('Usage:');
   WriteLn('  tensotest <port> [address] [timeout_ms]');
@@ -623,7 +649,7 @@ begin
   Rewrite(FLog);
 
   XmlWrite('<?xml version="1.0" encoding="UTF-8"?>');
-  XmlWrite('<tensotest_report version="' + APP_VERSION + '">');
+  XmlWrite('<tensotest_report version="' + APP_VERSION+'/'+ BuildVersion + '">');
   XmlWrite('  <environment>');
   XmlWrite('    <timestamp>' + FormatDateTime('yyyy-mm-dd hh:nn:ss', Now) + '</timestamp>');
   XmlWrite('    <platform>' + {$I %FPCTARGETOS%} + ' ' + {$I %FPCTARGETCPU%} + '</platform>');
@@ -659,11 +685,13 @@ begin
   CloseFile(FLog);
 end;
 
+{$R *.res}
+
 begin
   FrameLogger:=TFrameLogger.Create;
   ParseArgs;
 
-  WriteLn('=== TensoMLib Test Utility v' + APP_VERSION + ' ===');
+  WriteLn(Format('=== %s ===', [AppCaption]));
   WriteLn('Port: ', TestPort, '  Address: $', IntToHex(TestAddr, 2),
     '  Timeout: ', TestTimeout, ' ms');
   WriteLn;
