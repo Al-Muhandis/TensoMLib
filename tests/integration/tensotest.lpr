@@ -144,7 +144,7 @@ begin
     Result := '';
 end;
 
-{ Record a single test result. aOptional: if True, failures are recorded as SKIP }
+{ Записывает один результат теста. Вариант: если значение равно True, сбои записываются как пропущенные }
 procedure RecordTest(const aName, aCOP: string; aPass: Boolean;
   const aValue, aError, aReqHex, aRespHex: string;
   const aExtraXml: string = ''; aOptional: Boolean = False);
@@ -197,8 +197,7 @@ begin
 end;
 
 
-{ --- Test routines --- }
-
+{ --- Процедуры тестирования --- }
 procedure TestAutoDetectCRC;
 var
   aUseCRC: Boolean;
@@ -222,7 +221,7 @@ begin
       aReqHex := Dev.LastRequestHex;
       aRespHex := Dev.LastResponseHex;
       RecordTest('Auto-detect CRC', 'C3h (probe)', False, '', aErrMsg, aReqHex, aRespHex);
-      { Restore original CRC setting after failure }
+      { Восстановить исходную настройку CRC после сбоя }
       Dev.UseCRC := aUseCRC;
     end;
   end;
