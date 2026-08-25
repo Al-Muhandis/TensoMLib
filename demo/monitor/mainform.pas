@@ -331,14 +331,14 @@ end;
 function TFrmMain.ParseStatus(aStatus: Byte): string;
 begin
   Result := '';
-  if (aStatus and $80) <> 0 then Result := Result + 'Перезапуск, ';
-  if (aStatus and $40) <> 0 then Result := Result + 'Ошибка, ';
-  if (aStatus and $20) <> 0 then Result := Result + 'НЕТТО, ';
-  if (aStatus and $10) <> 0 then Result := Result + 'Клавиша нажата, ';
-  if (aStatus and $08) <> 0 then Result := Result + 'Конец дозирования, ';
-  if (aStatus and $04) <> 0 then Result := Result + 'Фиксация веса, ';
-  if (aStatus and $02) <> 0 then Result := Result + 'Калибровка АЦП, ';
-  if (aStatus and $01) <> 0 then Result := Result + 'Дозирование';
+  if (aStatus and $80) <> 0 then Result += 'Перезапуск, ';
+  if (aStatus and $40) <> 0 then Result += 'Ошибка, ';
+  if (aStatus and $20) <> 0 then Result += 'НЕТТО, ';
+  if (aStatus and $10) <> 0 then Result += 'Клавиша нажата, ';
+  if (aStatus and $08) <> 0 then Result += 'Конец дозирования, ';
+  if (aStatus and $04) <> 0 then Result += 'Фиксация веса, ';
+  if (aStatus and $02) <> 0 then Result += 'Калибровка АЦП, ';
+  if (aStatus and $01) <> 0 then Result += 'Дозирование';
   if Result = '' then
     Result := 'Нет активных состояний';
 end;
@@ -346,10 +346,10 @@ end;
 function TFrmMain.ParseIndicatorFlags(aFlags: Byte): string;
 begin
   Result := '';
-  if (aFlags and $01) <> 0 then Result := Result + 'Фикс, ';
-  if (aFlags and $02) <> 0 then Result := Result + 'Нетто, ';
-  if (aFlags and $04) <> 0 then Result := Result + 'Брутто, ';
-  if (aFlags and $08) <> 0 then Result := Result + 'Ноль';
+  if (aFlags and $01) <> 0 then Result += 'Фикс, ';
+  if (aFlags and $02) <> 0 then Result += 'Нетто, ';
+  if (aFlags and $04) <> 0 then Result += 'Брутто, ';
+  if (aFlags and $08) <> 0 then Result += 'Ноль';
   if Result = '' then
     Result := 'Нет флагов';
 end;

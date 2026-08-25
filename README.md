@@ -72,7 +72,7 @@ demo/
 ```mermaid
 graph TD
     core["core.pas"]
-    errors["errors.pas"]
+    tensom_errors["tensom_errors.pas"]
     crc8["crc8.pas"]
     bcd["bcd.pas"]
     frames["frames.pas"]
@@ -81,19 +81,19 @@ graph TD
     client["client.pas"]
 
     crc8 --> core
-    errors
+    tensom_errors
     bcd --> core
-    bcd --> errors
+    bcd --> tensom_errors
     frames --> core
     frames --> crc8
-    frames --> errors
+    frames --> tensom_errors
     transport --> core
     transport_serial --> transport
     client --> core
     client --> bcd
     client --> frames
     client --> transport
-    client --> errors
+    client --> tensom_errors
 
     style transport fill:#e8f5e9
     style transport_serial fill:#fff3e0

@@ -50,10 +50,10 @@ begin
     aHi := (B shr 4) and $0F;
     if (aLo > 9) or (aHi > 9) then
       raise ETensoMProtocolError.CreateFmt('Invalid BCD-byte %02X', [B]);
-    Result := Result + Int64(aLo) * aMultiplier;
-    aMultiplier := aMultiplier * 10;
-    Result := Result + Int64(aHi) * aMultiplier;
-    aMultiplier := aMultiplier * 10;
+    Result += Int64(aLo) * aMultiplier;
+    aMultiplier *= 10;
+    Result += Int64(aHi) * aMultiplier;
+    aMultiplier *= 10;
   end;
 end;
 
@@ -115,7 +115,7 @@ begin
   { Учёт позиции запятой: делим на 10^Decimals }
   aDivisor := 1.0;
   for I := 0 to aDecimals - 1 do
-    aDivisor := aDivisor * 10.0;
+    aDivisor *= 10.0;
   Result.Weight := aRaw / aDivisor;
 
   { D7 = знак минус }

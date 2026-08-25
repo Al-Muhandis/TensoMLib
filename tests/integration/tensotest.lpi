@@ -17,8 +17,7 @@
     <VersionInfo>
       <UseVersionInfo Value="True"/>
       <AutoIncrementBuild Value="True"/>
-      <RevisionNr Value="5"/>
-      <BuildNr Value="1"/>
+      <RevisionNr Value="6"/>
     </VersionInfo>
     <BuildModes>
       <Item Name="Default" Default="True"/>
@@ -128,6 +127,7 @@
     <RequiredPackages>
       <Item>
         <PackageName Value="tensom_rt"/>
+        <MinVersion Release="3" Valid="True"/>
       </Item>
     </RequiredPackages>
     <Units>

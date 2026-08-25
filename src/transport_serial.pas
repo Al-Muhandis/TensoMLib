@@ -20,7 +20,6 @@ uses
 
 type
   { Реализация через LazSerial (SynSer) }
-
   { TSerialTransport }
 
   TSerialTransport = class(ITensoMTransport)
@@ -28,7 +27,6 @@ type
     fSerial: TBlockSerial;{$ENDIF}
     fConnected: Boolean;
     fLastError: string;
-    fPortName: string;
     { Параметры порта }
     fDataBits: Byte;
     fParity: Char;
@@ -59,6 +57,11 @@ implementation
 uses
   windows
   ;
+
+const
+  DCB_F_BINARY = $00000001;
+  DCB_F_DTR_CONTROL_ENABLE = $00000010;
+  DCB_F_RTS_CONTROL_ENABLE = $00001000;
 
 { Хак для недоделанных USBtoCOM преобразователей под Windows: прямая настройка WinAPI DCB для исправленных стандартных
   драйверов USB serial, которые отклоняют SynSer Config() с помощью ERROR_INVALID_PARAMETER }
@@ -120,7 +123,7 @@ begin
   end;
 
   { fBinary($01) + DTR_CONTROL_ENABLE($10) + RTS_CONTROL_ENABLE($1000) }
-  aDCB.Flags := $00000001 or $00000010 or $00001000;
+  aDCB.Flags := DCB_F_BINARY or DCB_F_DTR_CONTROL_ENABLE or DCB_F_RTS_CONTROL_ENABLE;
 
   if not WinSetCommState(aHandle, aDCB) then
   begin
@@ -194,7 +197,6 @@ function TSerialTransport.Connect(const aPortName: string; aBaudRate: LongInt; a
 
       aSer.Purge;
       fSerial := aSer;
-      fPortName := aPortName;
       fBaudRate := aBaudRate;
       fDataBits := aDataBits;
       fParity := aParityChar;

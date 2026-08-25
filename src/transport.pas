@@ -25,6 +25,7 @@ uses
 type
   { Интерфейс транспорта }
   ITensoMTransport = interface
+    ['{F98621B0-59BC-4728-B348-2C4B962731B7}']
     function Connect(const aPortName: string; aBaudRate: LongInt; aDataBits: Byte = 8; aParity: Char = 'N';
       aStopBits: Byte = 1): Boolean;
     procedure Disconnect;
@@ -131,8 +132,8 @@ begin
   Result := '';
   for I := 0 to High(fSentLog) do
   begin
-    if I > 0 then Result := Result + ' | ';
-    Result := Result + HexBytes(fSentLog[I]);
+    if I > 0 then Result += ' | ';
+    Result += HexBytes(fSentLog[I]);
   end;
 end;
 

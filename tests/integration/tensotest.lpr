@@ -31,7 +31,6 @@ uses
   ;
 
 const
-  APP_VERSION = '1.5';
   DEFAULT_ADDRESS = 1;
   DEFAULT_TIMEOUT = 3000; { мс }
   WEIGHT_READINGS = 5;
@@ -87,7 +86,7 @@ end;
 
 function AppCaption: String;
 begin
-  Result := Format('TensoMLib Test Utility: v%s [deprecated], v%s', [APP_VERSION, BuildVersion])
+  Result := Format('TensoMLib Test Utility: v%s', [BuildVersion])
 end;
 
 { --- Helpers --- }
@@ -282,16 +281,14 @@ begin
   try
     W := Dev.GetBruttoWeight;
     S := Format('%.*f kg', [W.DecimalPlaces, W.Weight]);
-    if W.Stable then S := S + ' STABLE';
-    if W.Negative then S := S + ' NEGATIVE';
-    if W.Overload then S := S + ' OVERLOAD';
-    RecordTest('GROSS weight', 'C3h', True, S, '',
-      Dev.LastRequestHex, Dev.LastResponseHex);
+    if W.Stable then S += ' STABLE';
+    if W.Negative then S += ' NEGATIVE';
+    if W.Overload then S += ' OVERLOAD';
+    RecordTest('GROSS weight', 'C3h', True, S, '', Dev.LastRequestHex, Dev.LastResponseHex);
   except
     on E: Exception do
-      RecordTest('GROSS weight', 'C3h', False, '',
-        E.Message + TransportErrSuffix,
-        Dev.LastRequestHex, Dev.LastResponseHex);
+      RecordTest('GROSS weight', 'C3h', False, '', E.Message + TransportErrSuffix, Dev.LastRequestHex,
+        Dev.LastResponseHex);
   end;
 end;
 
@@ -303,11 +300,10 @@ begin
   try
     W := Dev.GetNettoWeight;
     S := Format('%.*f kg', [W.DecimalPlaces, W.Weight]);
-    if W.Stable then S := S + ' STABLE';
-    if W.Negative then S := S + ' NEGATIVE';
-    if W.Overload then S := S + ' OVERLOAD';
-    RecordTest('NET weight', 'C2h', True, S, '',
-      Dev.LastRequestHex, Dev.LastResponseHex);
+    if W.Stable then S += ' STABLE';
+    if W.Negative then S += ' NEGATIVE';
+    if W.Overload then S += ' OVERLOAD';
+    RecordTest('NET weight', 'C2h', True, S, '', Dev.LastRequestHex, Dev.LastResponseHex);
   except
     on E: Exception do
       RecordTest('NET weight', 'C2h', False, '',
@@ -355,17 +351,16 @@ begin
     S := '';
     for I := 0 to High(aData) do
     begin
-      if I > 0 then S := S + ' ';
-      S := S + IntToHex(aData[I], 2);
+      if I > 0 then S += ' ';
+      S += IntToHex(aData[I], 2);
     end;
     RecordTest('Discrete inputs', 'C4h', True,
       Format('%d byte(s): %s', [Length(aData), S]), '',
       Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   except
     on E: Exception do
-      RecordTest('Discrete inputs', 'C4h', False, '',
-        E.Message + TransportErrSuffix,
-        Dev.LastRequestHex, Dev.LastResponseHex, '', True);
+      RecordTest('Discrete inputs', 'C4h', False, '', E.Message + TransportErrSuffix, Dev.LastRequestHex,
+        Dev.LastResponseHex, '', True);
   end;
 end;
 
@@ -380,8 +375,8 @@ begin
     S := '';
     for I := 0 to High(aData) do
     begin
-      if I > 0 then S := S + ' ';
-      S := S + IntToHex(aData[I], 2);
+      if I > 0 then S += ' ';
+      S += IntToHex(aData[I], 2);
     end;
     RecordTest('Discrete outputs', 'C5h', True,
       Format('%d byte(s): %s', [Length(aData), S]), '',
@@ -451,17 +446,15 @@ begin
       S := '';
       for J := 0 to High(aData) do
       begin
-        if J > 0 then S := S + ' ';
-        S := S + IntToHex(aData[J], 2);
+        if J > 0 then S += ' ';
+        S += IntToHex(aData[J], 2);
       end;
-      RecordTest(Format('Counter #%d', [I]), 'C8h', True,
-        Format('%d byte(s): %s', [Length(aData), S]), '',
+      RecordTest(Format('Counter #%d', [I]), 'C8h', True, Format('%d byte(s): %s', [Length(aData), S]), '',
         Dev.LastRequestHex, Dev.LastResponseHex, '', aIsOpt);
     except
       on E: Exception do
-        RecordTest(Format('Counter #%d', [I]), 'C8h', False, '',
-          E.Message + TransportErrSuffix,
-          Dev.LastRequestHex, Dev.LastResponseHex, '', aIsOpt);
+        RecordTest(Format('Counter #%d', [I]), 'C8h', False, '', E.Message + TransportErrSuffix, Dev.LastRequestHex,
+          Dev.LastResponseHex, '', aIsOpt);
     end;
   end;
 end;
@@ -477,11 +470,10 @@ begin
     S := '';
     for I := 0 to High(aData) do
     begin
-      if I > 0 then S := S + ' ';
-      S := S + IntToHex(aData[I], 2);
+      if I > 0 then S += ' ';
+      S += IntToHex(aData[I], 2);
     end;
-    RecordTest('Calibration parameters', 'CBh', True,
-      Format('%d byte(s): %s', [Length(aData), S]), '',
+    RecordTest('Calibration parameters', 'CBh', True, Format('%d byte(s): %s', [Length(aData), S]), '',
       Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   except
     on E: Exception do
@@ -502,17 +494,15 @@ begin
     S := '';
     for I := 0 to High(aData) do
     begin
-      if I > 0 then S := S + ' ';
-      S := S + IntToHex(aData[I], 2);
+      if I > 0 then S += ' ';
+      S += IntToHex(aData[I], 2);
     end;
-    RecordTest('ADC code', 'CCh', True,
-      Format('%d byte(s): %s', [Length(aData), S]), '',
-      Dev.LastRequestHex, Dev.LastResponseHex, '', True);
+    RecordTest('ADC code', 'CCh', True, Format('%d byte(s): %s', [Length(aData), S]), '', Dev.LastRequestHex,
+      Dev.LastResponseHex, '', True);
   except
     on E: Exception do
-      RecordTest('ADC code', 'CCh', False, '',
-        E.Message + TransportErrSuffix,
-        Dev.LastRequestHex, Dev.LastResponseHex, '', True);
+      RecordTest('ADC code', 'CCh', False, '', E.Message + TransportErrSuffix, Dev.LastRequestHex, Dev.LastResponseHex,
+        '', True);
   end;
 end;
 
@@ -648,7 +638,7 @@ begin
   Rewrite(FLog);
 
   XmlWrite('<?xml version="1.0" encoding="UTF-8"?>');
-  XmlWrite('<tensotest_report version="' + APP_VERSION+'/'+ BuildVersion + '">');
+  XmlWrite('<tensotest_report version="' + BuildVersion + '">');
   XmlWrite('  <environment>');
   XmlWrite('    <timestamp>' + FormatDateTime('yyyy-mm-dd hh:nn:ss', Now) + '</timestamp>');
   XmlWrite('    <platform>' + {$I %FPCTARGETOS%} + ' ' + {$I %FPCTARGETCPU%} + '</platform>');
@@ -658,7 +648,7 @@ begin
   XmlWrite('  </environment>');
   XmlWrite('  <tests>');
 
-  WriteLn(FLog, '=== TensoMLib Frame Log v' + APP_VERSION + ' ===');
+  WriteLn(FLog, '=== TensoMLib Frame Log v' + BuildVersion + ' ===');
   WriteLn(FLog, Format('Port: %s  Address: $%s  Timeout: %d ms',
     [TestPort, IntToHex(TestAddr, 2), TestTimeout]));
   WriteLn(FLog, Format('Started: %s', [FormatDateTime('yyyy-mm-dd hh:nn:ss', Now)]));

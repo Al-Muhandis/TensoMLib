@@ -471,7 +471,7 @@ begin
 
   aDivisor := 1.0;
   for I := 0 to aDecimals - 1 do
-    aDivisor := aDivisor * 10.0;
+    aDivisor *= 10.0;
   aMaxWeight := aMaxRaw / aDivisor;
 
   if Length(aPF.Data) >= 6 then
@@ -607,7 +607,7 @@ begin
   { Последний байт — флаги (L), остальные — символы ASCII }
   if Length(aPF.Data) >= 2 then
     for I := 0 to Length(aPF.Data) - 2 do
-      aText := aText + Char(aPF.Data[I]);
+      aText += Char(aPF.Data[I]);
 
   aFlags := aPF.Data[High(aPF.Data)];
 end;
@@ -620,7 +620,7 @@ begin
   aPF := SendCommand(COP_GET_PRODUCT_CODE);
   Result := '';
   for I := 0 to High(aPF.Data) do
-    Result := Result + Char(aPF.Data[I]);
+    Result += Char(aPF.Data[I]);
 end;
 
 { === Счётчики === }
