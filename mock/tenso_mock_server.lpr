@@ -38,6 +38,8 @@ program tenso_mock_server;
     -status <hex>   Байт системного статуса (по умолчанию: $00)
     -err <COP>:<ERR>  Имитировать ошибку EEh на указанный COP
     -h, -?          Справка
+    -step <value>   Шаг изменения веса стрелками (по умолчанию: 1 знак последнего разряда)
+    -nokb           Отключить управление с клавиатуры
 
   Автоопределение CRC:
     По умолчанию сервер пробует разобрать входящий кадр сначала с CRC,
@@ -49,12 +51,13 @@ program tenso_mock_server;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, StrUtils, Math,
-  LazSynaSer, core, frames, mock_server
+  SysUtils, StrUtils, Math, Crt,
+  LazSynaSer,
+  core, frames, mock_server
   ;
 
 const
-  APP_VERSION = '1.3';
+  APP_VERSION = '1.4';
   RECV_TIMEOUT_MS = 100;
 
 var
@@ -66,6 +69,10 @@ var
   CRCDetected: Boolean;
   FrameCount: Integer;
   ByteCount: Integer;
+  KbEnabled: Boolean;
+  WeightStep: Double;
+  InputMode: Boolean;
+  InputBuf: string;
 
 { === Ввод/вывод через TBlockSerial === }
 
@@ -156,8 +163,7 @@ begin
     end;
   end;
 
-  WriteLn(Format('>> $%02X  [%s]  (%d bytes)',
-    [aParsed.COP, HexBytes(aParsed.Data), Length(aParsed.Data)]));
+  //WriteLn(Format('>> $%02X  [%s]  (%d bytes)', [aParsed.COP, HexBytes(aParsed.Data), Length(aParsed.Data)]));
 
   Inc(FrameCount);
   Mock.HandleRequest(aParsed, aResponse);
@@ -165,7 +171,164 @@ begin
   if Length(aResponse) > 0 then
   begin
     IOWrite(aResponse);
-    WriteLn(Format('<< $%02X  (%d bytes)', [aResponse[0], Length(aResponse)]));
+    //WriteLn(Format('<< $%02X  (%d bytes)', [aResponse[0], Length(aResponse)]));
+  end;
+end;
+
+{ === Интерактивное управление весом === }
+
+function SignedWeight: Double;
+begin
+  if Mock.WeightNegative then
+    Result := -Mock.Weight
+  else
+    Result := Mock.Weight;
+end;
+
+procedure PrintWeightState;
+begin
+  WriteLn(Format('[kb] Weight = %.*f  step=%s  %s%s%s',
+    [Mock.WeightDecimalPlaces, SignedWeight,
+     FloatToStr(WeightStep),
+     IfThen(Mock.WeightStable, 'STABLE', 'UNSTABLE'),
+     IfThen(Mock.WeightNegative, ' NEG', ''),
+     IfThen(Mock.WeightOverload, ' OVERLOAD', '')]));
+end;
+
+{ Устанавливает вес со знаком; в BCD-поле влезает 6 цифр }
+procedure ApplyWeight(aValue: Double);
+var
+  aMax: Double;
+begin
+  aMax := 999999 / IntPower(10, Mock.WeightDecimalPlaces);
+  aValue := RoundTo(aValue, -Mock.WeightDecimalPlaces);
+  if aValue > aMax then aValue := aMax;
+  if aValue < -aMax then aValue := -aMax;
+  Mock.WeightNegative := aValue < 0;
+  Mock.Weight := Abs(aValue);
+  PrintWeightState;
+end;
+
+procedure PrintKeyHelp;
+begin
+  WriteLn('Keys:');
+  WriteLn('  Up/Right, Down/Left  weight +/- step');
+  WriteLn('  ] / [                step x10 / /10');
+  WriteLn('  w or digit           enter exact value (Enter - apply, Esc - cancel)');
+  WriteLn('  z                    zero');
+  WriteLn('  s                    toggle stable');
+  WriteLn('  n                    toggle negative sign');
+  WriteLn('  o                    toggle overload');
+  WriteLn('  ?                    this help');
+  WriteLn('  q                    quit');
+end;
+
+procedure StartInput(const aFirst: string);
+begin
+  InputMode := True;
+  InputBuf := aFirst;
+  Write('Weight> ', InputBuf);
+end;
+
+procedure HandleInputKey(K: Char);
+var
+  aVal: Double;
+  aStr: string;
+begin
+  case K of
+    #0: ReadKey;  { расширенный код — игнорируем }
+    #3: begin WriteLn; Running := False; end;   { Ctrl+C }
+    #13:
+    begin
+      WriteLn;
+      InputMode := False;
+      aStr := StringReplace(InputBuf, ',', DefaultFormatSettings.DecimalSeparator, []);
+      aStr := StringReplace(aStr, '.', DefaultFormatSettings.DecimalSeparator, []);
+      if TryStrToFloat(aStr, aVal) then
+        ApplyWeight(aVal)
+      else
+        WriteLn('[kb] Invalid number: ', InputBuf);
+    end;
+    #27:
+    begin
+      WriteLn;
+      WriteLn('[kb] Cancelled');
+      InputMode := False;
+    end;
+    #8, #127:
+      if Length(InputBuf) > 0 then
+      begin
+        SetLength(InputBuf, Length(InputBuf) - 1);
+        Write(#8' '#8);
+      end;
+    '0'..'9', '-', '.', ',':
+    begin
+      InputBuf := InputBuf + K;
+      Write(K);
+    end;
+  end;
+end;
+
+procedure HandleCommandKey(K: Char);
+var
+  aExt: Char;
+  aMinStep: Double;
+begin
+  aMinStep := 1 / IntPower(10, Mock.WeightDecimalPlaces);
+  case K of
+    #3: Running := False;   { Ctrl+C }
+    #0:
+    begin
+      aExt := ReadKey;
+      case aExt of
+        #72, #77: ApplyWeight(SignedWeight + WeightStep);  { Up, Right }
+        #80, #75: ApplyWeight(SignedWeight - WeightStep);  { Down, Left }
+      end;
+    end;
+    ']':
+    begin
+      WeightStep := Min(WeightStep * 10, 1000);
+      PrintWeightState;
+    end;
+    '[':
+    begin
+      WeightStep := Max(WeightStep / 10, aMinStep);
+      PrintWeightState;
+    end;
+    'w', 'W': StartInput('');
+    '0'..'9', '-', '.', ',': StartInput(K);
+    'z', 'Z': ApplyWeight(0);
+    's', 'S':
+    begin
+      Mock.WeightStable := not Mock.WeightStable;
+      PrintWeightState;
+    end;
+    'n', 'N':
+    begin
+      Mock.WeightNegative := not Mock.WeightNegative;
+      PrintWeightState;
+    end;
+    'o', 'O':
+    begin
+      Mock.WeightOverload := not Mock.WeightOverload;
+      PrintWeightState;
+    end;
+    '?': PrintKeyHelp;
+    'q', 'Q': Running := False;
+  end;
+end;
+
+procedure PollKeyboard;
+var
+  K: Char;
+begin
+  while KbEnabled and KeyPressed do
+  begin
+    K := ReadKey;
+    if InputMode then
+      HandleInputKey(K)
+    else
+      HandleCommandKey(K);
   end;
 end;
 
@@ -185,6 +348,7 @@ begin
     WriteLn;
     while Running do
     begin
+      PollKeyboard;
       if not IORead(aBuf, aReadCount) then
         Continue;
       Inc(ByteCount, aReadCount);
@@ -237,6 +401,9 @@ begin
   WriteLn('  -status <hex>   System status byte (default: $00)');
   WriteLn('  -err <COP>:<ERR> Simulate error EEh on a COP');
   WriteLn('  -h, -?          Show this help');
+  WriteLn('  -step <value>   The step of changing the weight using the arrows (by default: 1 digit of the last digit)');
+  WriteLn('  -nokb           Disable keyboard control');
+
   WriteLn;
   WriteLn('Examples:');
   WriteLn('  # Linux: via socat virtual pair');
@@ -380,9 +547,14 @@ begin
     end;
 
     WriteLn(Format('Address: $%02X  CRC: %s  Weight: %s  Decimals: %d',
-      [Mock.Address, IfThen(Mock.UseCRC, 'ON', 'OFF (auto)'),
-       FloatToStr(Mock.Weight), Mock.WeightDecimalPlaces]));
+      [Mock.Address, IfThen(Mock.UseCRC, 'ON', 'OFF (auto)'), FloatToStr(Mock.Weight), Mock.WeightDecimalPlaces]));
     WriteLn;
+
+    KbEnabled := not HasFlag('-nokb');
+    InputMode := False;
+    WeightStep := StrToFloatDef(ArgValue('-step', ''), 1 / IntPower(10, aDecimals));
+    if KbEnabled then
+      PrintKeyHelp;
 
     Running := True;
     FrameCount := 0;
