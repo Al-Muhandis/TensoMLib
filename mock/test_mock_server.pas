@@ -18,6 +18,7 @@ uses
   core in '../src/core.pas',
   tensom_errors in '../src/tensom_errors.pas',
   client in '../src/client.pas',
+  frames in '../src/frames.pas',
   mock_server in 'mock_server.pas'
   ;
 
@@ -92,6 +93,16 @@ type
 
     { Смена адреса }
     procedure Test_SetAddress;
+  end;
+
+  { TTestMockBus — мультиадресная «шина» из нескольких виртуальных приборов
+    (TMockBus): кадр маршрутизируется по адресу, отвечает только адресат,
+    прибор со сменённым адресом доступен под новым. }
+  TTestMockBus = class(TTestCase)
+  published
+    procedure Test_Route_ByAddress;
+    procedure Test_UnknownAddr_Silence;
+    procedure Test_DeviceMovedToNewAddr;
   end;
 
 implementation
@@ -753,8 +764,115 @@ begin
   end;
 end;
 
+{ === TTestMockBus — мультиадресная шина виртуальных приборов === }
+
+{ Тело кадра без разделителей (FF ... FF FF): BuildFrame строит ПОЛНЫЙ
+  проводной кадр, ParseFrame/TryRoute ждут тело - как его собирает
+  TFrameCollector на приёмной стороне. }
+function FrameBodyOf(const aFrame: TBytes): TBytes;
+begin
+  if not ((Length(aFrame) >= 4) and (aFrame[0] = $FF)
+    and (aFrame[High(aFrame)] = $FF) and (aFrame[High(aFrame) - 1] = $FF)) then
+    raise Exception.Create('FrameBodyOf: кадр без разделителей FF');
+  Result := Copy(aFrame, 1, Length(aFrame) - 3);
+end;
+
+procedure TTestMockBus.Test_Route_ByAddress;
+var
+  aBus: TMockBus;
+  aFrame, aBody: TBytes;
+  aParsed: TParsedFrame;
+  aMock: TMockDeviceTransport;
+begin
+  aBus := TMockBus.Create;
+  try
+    aBus.AddDevice($01);
+    aBus.AddDevice($03);
+    aBus.AddDevice($05);
+    aBus.Device(0).Weight := 11.0;
+    aBus.Device(1).Weight := 33.0;
+    aBus.Device(2).Weight := 55.0;
+
+    { Запрос веса адресу 3: кадр маршрутизируется ПРИБОРУ по адресу }
+    aBody := FrameBodyOf(BuildFrame($03, COP_GET_BRUTTO, nil, True));
+    AssertTrue('Кадр адресу 3 маршрутизирован', aBus.TryRoute(aBody, aBody, True, aParsed, aMock));
+    AssertEquals('Адресат - прибор адреса 3', $03, aMock.Address);
+    AssertEquals('COP дошёл', COP_GET_BRUTTO, aParsed.COP);
+
+    { Остальные адреса шины находят СВОЙ прибор }
+    aBody := FrameBodyOf(BuildFrame($05, COP_GET_BRUTTO, nil, True));
+    AssertTrue('Кадр адресу 5 маршрутизирован', aBus.TryRoute(aBody, aBody, True, aParsed, aMock));
+    AssertEquals('Адресат - прибор адреса 5', $05, aMock.Address);
+  finally
+    aBus.Free;
+  end;
+end;
+
+procedure TTestMockBus.Test_UnknownAddr_Silence;
+var
+  aBus: TMockBus;
+  aFrame, aBody: TBytes;
+  aParsed: TParsedFrame;
+  aMock: TMockDeviceTransport;
+begin
+  aBus := TMockBus.Create;
+  try
+    aBus.AddDevice($01);
+    aBus.AddDevice($03);
+
+    { Чужой адрес никто не разбирает - шина молчит }
+    aBody := FrameBodyOf(BuildFrame($63, COP_GET_BRUTTO, nil, True));
+    AssertFalse('Чужой адрес - тишина', aBus.TryRoute(aBody, aBody, True, aParsed, aMock));
+    AssertNull('Прибор не найден', aMock);
+
+    { Битый CRC: адресат есть, но кадр не разбирается - тишина.
+      Порядок байтов: FF addr COP data CRC FF FF - портим именно CRC. }
+    aFrame := BuildFrame($01, COP_GET_BRUTTO, nil, True);
+    aFrame[High(aFrame) - 3] := aFrame[High(aFrame) - 3] xor $FF;   { портим CRC }
+    aBody := FrameBodyOf(aFrame);
+    AssertFalse('Битый CRC - тишина', aBus.TryRoute(aBody, aBody, True, aParsed, aMock));
+  finally
+    aBus.Free;
+  end;
+end;
+
+procedure TTestMockBus.Test_DeviceMovedToNewAddr;
+var
+  aBus: TMockBus;
+  aData: TBytes;
+  aBody: TBytes;
+  aParsed: TParsedFrame;
+  aMock: TMockDeviceTransport;
+  aResponse: TBytes;
+begin
+  aBus := TMockBus.Create;
+  try
+    aBus.AddDevice($01);
+
+    { SetNetworkAddress($07) - команда АДРЕСНАЯ, кадр с ТЕКУЩИМ адресом }
+    SetLength(aData, 1);
+    aData[0] := $07;
+    aBody := FrameBodyOf(BuildFrame($01, COP_SET_ADDRESS, aData, True));
+    AssertTrue('Команда смены адреса маршрутизирована', aBus.TryRoute(aBody, aBody, True, aParsed, aMock));
+    aResponse := nil;
+    aMock.HandleRequest(aParsed, aResponse);
+    AssertEquals('Прибор переехал на адрес 7', $07, aMock.Address);
+
+    { Новый адрес отвечает, старый молчит }
+    aBody := FrameBodyOf(BuildFrame($07, COP_GET_BRUTTO, nil, True));
+    AssertTrue('Новый адрес маршрутизируется', aBus.TryRoute(aBody, aBody, True, aParsed, aMock));
+    AssertEquals('Ответил переехавший прибор', $07, aMock.Address);
+
+    aBody := FrameBodyOf(BuildFrame($01, COP_GET_BRUTTO, nil, True));
+    AssertFalse('Старый адрес замолчал', aBus.TryRoute(aBody, aBody, True, aParsed, aMock));
+  finally
+    aBus.Free;
+  end;
+end;
+
 initialization
 
   RegisterTest(TTestMockServer);
+  RegisterTest(TTestMockBus);
 
 end.

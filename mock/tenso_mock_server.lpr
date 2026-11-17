@@ -20,7 +20,9 @@ program tenso_mock_server;
 
   Опции:
     -p <port>       Serial port (обязательный)
-    -a <addr>       Адрес прибора $01..$9F (по умолчанию: 1)
+    -a <addr-list>  Адрес(а) прибора $01..$9F через запятую: «-a 1,3,5» -
+                    НЕСКОЛЬКО виртуальных приборов на одной шине (мультиадрес,
+                    адрес маршрутизирует кадры; по умолчанию: 1)
     -baud <rate>    Скорость (по умолчанию: 9600)
     -crc            Использовать CRC (по умолчанию: автоопределение)
     -nocrc          Не использовать CRC
@@ -30,13 +32,14 @@ program tenso_mock_server;
     -unstable       Вес нестабилен
     -negative       Отрицательный вес
     -overload       Перегрузка
-    -sn <number>    Серийный номер (по умолчанию: 12345)
+    -sn <number>    Серийный номер (по умолчанию: 12345; на шине из
+                    нескольких приборов SN = база+i, у каждого свой)
     -maxw <value>   Максимальный вес (по умолчанию: 150.0)
     -div <value>    Цена деления (по умолчанию: 0.5)
     -mode <g|n>     Режим: g=GROSS, n=NET (по умолчанию: GROSS)
     -delay <ms>     Искусственная задержка ответа, мс (по умолчанию: 0)
     -status <hex>   Байт системного статуса (по умолчанию: $00)
-    -err <COP>:<ERR>  Имитировать ошибку EEh на указанный COP
+    -err <COP>:<ERR>  Имитировать ошибку EEh на указанный COP (всем приборам)
     -h, -?          Справка
     -step <value>   Шаг изменения веса стрелками (по умолчанию: 1 знак последнего разряда)
     -nokb           Отключить управление с клавиатуры
@@ -51,17 +54,17 @@ program tenso_mock_server;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, StrUtils, Math, Crt,
+  Classes, SysUtils, StrUtils, Math, Crt,
   LazSynaSer,
   core, frames, mock_server
   ;
 
 const
-  APP_VERSION = '1.4';
+  APP_VERSION = '1.5';
   RECV_TIMEOUT_MS = 100;
 
 var
-  Mock: TMockDeviceTransport;
+  Bus: TMockBus;
   Serial: TBlockSerial;
   PortName: string;
   Running: Boolean;
@@ -107,17 +110,7 @@ begin
 end;
 
 { === Автоопределение CRC === }
-
-function TryParseFrame(const aBody, aRaw: TBytes; aAddress: Byte;
-  aUseCRC: Boolean; out aParsed: TParsedFrame): Boolean;
-begin
-  try
-    aParsed := ParseFrame(aBody, aRaw, aAddress, aUseCRC);
-    Result := True;
-  except
-    Result := False;
-  end;
-end;
+{ (роль выполняет TMockBus.TryRoute: кадр пробуется под адресами шины) }
 
 { === Обработка одного собранного кадра === }
 
@@ -126,22 +119,24 @@ var
   aParsed: TParsedFrame;
   aResponse: TBytes = nil;
   aUseCRC: Boolean;
+  aMock: TMockDeviceTransport;
 begin
   aParsed := Default(TParsedFrame);
-  aUseCRC := Mock.UseCRC;
+  aUseCRC := Bus.Device(0).UseCRC;
+  aMock := nil;
 
   if (not CRCForced) and (not CRCDetected) then
   begin
-    if TryParseFrame(aBody, aRaw, Mock.Address, True, aParsed) then
+    if Bus.TryRoute(aBody, aRaw, True, aParsed, aMock) then
     begin
       CRCDetected := True;
-      Mock.UseCRC := True;
+      Bus.SetUseCRC(True);
       WriteLn(Format('[auto] CRC detected: ON  (COP=$%02X)', [aParsed.COP]));
     end
-    else if TryParseFrame(aBody, aRaw, Mock.Address, False, aParsed) then
+    else if Bus.TryRoute(aBody, aRaw, False, aParsed, aMock) then
     begin
       CRCDetected := True;
-      Mock.UseCRC := False;
+      Bus.SetUseCRC(False);
       WriteLn(Format('[auto] CRC detected: OFF (COP=$%02X)', [aParsed.COP]));
     end
     else
@@ -152,13 +147,21 @@ begin
   end
   else
   begin
-    if not TryParseFrame(aBody, aRaw, Mock.Address, aUseCRC, aParsed) then
+    if not Bus.TryRoute(aBody, aRaw, aUseCRC, aParsed, aMock) then
     begin
-      WriteLn('[warn] Parse error, responding with ERR_CRC');
-      SetLength(aResponse, 1);
-      aResponse[0] := ERR_CRC;
-      aResponse := BuildFrame(Mock.Address, COP_ERROR, aResponse, aUseCRC);
-      IOWrite(aResponse);
+      { Битый кадр: на шине несколько приборов адресата не определить -
+        реальная шина молчит; единственный прибор - прежнее поведение
+        (ответ ERR_CRC). }
+      if Bus.Count = 1 then
+      begin
+        WriteLn('[warn] Parse error, responding with ERR_CRC');
+        SetLength(aResponse, 1);
+        aResponse[0] := ERR_CRC;
+        aResponse := BuildFrame(Bus.Device(0).Address, COP_ERROR, aResponse, aUseCRC);
+        IOWrite(aResponse);
+      end
+      else
+        WriteLn('[warn] Frame not routed to any device (bad CRC / unknown address) - silence');
       Exit;
     end;
   end;
@@ -166,7 +169,7 @@ begin
   //WriteLn(Format('>> $%02X  [%s]  (%d bytes)', [aParsed.COP, HexBytes(aParsed.Data), Length(aParsed.Data)]));
 
   Inc(FrameCount);
-  Mock.HandleRequest(aParsed, aResponse);
+  aMock.HandleRequest(aParsed, aResponse);
 
   if Length(aResponse) > 0 then
   begin
@@ -176,36 +179,41 @@ begin
 end;
 
 { === Интерактивное управление весом === }
+{ Клавиатура управляет ВСЕМИ приборами шины синхронно (ручная среда). }
 
 function SignedWeight: Double;
 begin
-  if Mock.WeightNegative then
-    Result := -Mock.Weight
+  if Bus.Device(0).WeightNegative then
+    Result := -Bus.Device(0).Weight
   else
-    Result := Mock.Weight;
+    Result := Bus.Device(0).Weight;
 end;
 
 procedure PrintWeightState;
 begin
-  WriteLn(Format('[kb] Weight = %.*f  step=%s  %s%s%s',
-    [Mock.WeightDecimalPlaces, SignedWeight,
+  WriteLn(Format('[kb] Weight = %.*f  step=%s  %s%s%s  (всего приборов: %d)',
+    [Bus.Device(0).WeightDecimalPlaces, SignedWeight,
      FloatToStr(WeightStep),
-     IfThen(Mock.WeightStable, 'STABLE', 'UNSTABLE'),
-     IfThen(Mock.WeightNegative, ' NEG', ''),
-     IfThen(Mock.WeightOverload, ' OVERLOAD', '')]));
+     IfThen(Bus.Device(0).WeightStable, 'STABLE', 'UNSTABLE'),
+     IfThen(Bus.Device(0).WeightNegative, ' NEG', ''),
+     IfThen(Bus.Device(0).WeightOverload, ' OVERLOAD', ''), Bus.Count]));
 end;
 
 { Устанавливает вес со знаком; в BCD-поле влезает 6 цифр }
 procedure ApplyWeight(aValue: Double);
 var
   aMax: Double;
+  I: Integer;
 begin
-  aMax := 999999 / IntPower(10, Mock.WeightDecimalPlaces);
-  aValue := RoundTo(aValue, -Mock.WeightDecimalPlaces);
-  if aValue > aMax then aValue := aMax;
-  if aValue < -aMax then aValue := -aMax;
-  Mock.WeightNegative := aValue < 0;
-  Mock.Weight := Abs(aValue);
+  aValue := RoundTo(aValue, -Bus.Device(0).WeightDecimalPlaces);
+  for I := 0 to Bus.Count - 1 do
+  begin
+    aMax := 999999 / IntPower(10, Bus.Device(I).WeightDecimalPlaces);
+    if aValue > aMax then aValue := aMax;
+    if aValue < -aMax then aValue := -aMax;
+    Bus.Device(I).WeightNegative := aValue < 0;
+    Bus.Device(I).Weight := Abs(aValue);
+  end;
   PrintWeightState;
 end;
 
@@ -273,8 +281,9 @@ procedure HandleCommandKey(K: Char);
 var
   aExt: Char;
   aMinStep: Double;
+  I: Integer;
 begin
-  aMinStep := 1 / IntPower(10, Mock.WeightDecimalPlaces);
+  aMinStep := 1 / IntPower(10, Bus.Device(0).WeightDecimalPlaces);
   case K of
     #3: Running := False;   { Ctrl+C }
     #0:
@@ -300,17 +309,20 @@ begin
     'z', 'Z': ApplyWeight(0);
     's', 'S':
     begin
-      Mock.WeightStable := not Mock.WeightStable;
+      for I := 0 to Bus.Count - 1 do
+        Bus.Device(I).WeightStable := not Bus.Device(I).WeightStable;
       PrintWeightState;
     end;
     'n', 'N':
     begin
-      Mock.WeightNegative := not Mock.WeightNegative;
+      for I := 0 to Bus.Count - 1 do
+        Bus.Device(I).WeightNegative := not Bus.Device(I).WeightNegative;
       PrintWeightState;
     end;
     'o', 'O':
     begin
-      Mock.WeightOverload := not Mock.WeightOverload;
+      for I := 0 to Bus.Count - 1 do
+        Bus.Device(I).WeightOverload := not Bus.Device(I).WeightOverload;
       PrintWeightState;
     end;
     '?': PrintKeyHelp;
@@ -384,7 +396,9 @@ begin
   WriteLn('Options:');
   WriteLn('  -p <port>       Serial port (required, e.g. COM10, /tmp/s1)');
   WriteLn('  -baud <rate>    Baud rate (default: 9600)');
-  WriteLn('  -a <addr>       Device address $01..$9F (default: 1)');
+  WriteLn('  -a <addr-list>  Device address(es) $01..$9F, comma-separated');
+  WriteLn('                  (e.g. -a 1,3,5 = MULTIPLE devices on one bus,');
+  WriteLn('                  default: 1)');
   WriteLn('  -crc            Force CRC mode (default: auto-detect)');
   WriteLn('  -nocrc          Force no-CRC mode');
   WriteLn('  -w <value>      Initial weight (default: 0.0)');
@@ -393,13 +407,14 @@ begin
   WriteLn('  -unstable       Weight is unstable');
   WriteLn('  -negative       Weight is negative');
   WriteLn('  -overload       Weight overload');
-  WriteLn('  -sn <number>    Serial number (default: 12345)');
+  WriteLn('  -sn <number>    Serial number (default: 12345; on a multi-device');
+  WriteLn('                  bus each device gets SN = base + index)');
   WriteLn('  -maxw <value>   Max weight for C1h (default: 150.0)');
   WriteLn('  -div <value>    Division for C1h (default: 0.5)');
   WriteLn('  -mode <g|n>     Mode: g=GROSS, n=NET (default: GROSS)');
   WriteLn('  -delay <ms>     Response delay in ms (default: 0)');
   WriteLn('  -status <hex>   System status byte (default: $00)');
-  WriteLn('  -err <COP>:<ERR> Simulate error EEh on a COP');
+  WriteLn('  -err <COP>:<ERR> Simulate error EEh on a COP (all devices)');
   WriteLn('  -h, -?          Show this help');
   WriteLn('  -step <value>   The step of changing the weight using the arrows (by default: 1 digit of the last digit)');
   WriteLn('  -nokb           Disable keyboard control');
@@ -414,6 +429,9 @@ begin
   WriteLn('  # Windows: via com0com virtual pair (COM10 <-> COM11)');
   WriteLn('  tenso_mock_server -p COM10 -a 1 -w 123.4 -stable');
   WriteLn('  tensotest COM11 1');
+  WriteLn;
+  WriteLn('  # One bus, three devices at addresses 1, 3, 5');
+  WriteLn('  tenso_mock_server -p COM10 -a 1,3,5 -w 42.0');
   Halt(0);
 end;
 
@@ -445,8 +463,51 @@ end;
 
 { === Точка входа === }
 
+{ Разбор списка адресов «1,3,5» (мультиадресная шина) }
+function ParseAddrList(const aArg: string): TBytes;
 var
-  aAddr, aBaud: Integer;
+  aParts: TStringList;
+  I, aVal: Integer;
+  aSeen: TStringList;
+begin
+  SetLength(Result, 0);
+  aParts := TStringList.Create;
+  aSeen := TStringList.Create;
+  try
+    aParts.Delimiter := ',';
+    aParts.StrictDelimiter := True;
+    aParts.DelimitedText := aArg;
+    for I := 0 to aParts.Count - 1 do
+    begin
+      aVal := StrToIntDef(Trim(aParts[I]), -1);
+      if (aVal < 1) or (aVal > 159) then
+      begin
+        WriteLn('ERROR: Address must be 1..159, got "', aParts[I], '"');
+        Halt(1);
+      end;
+      if aSeen.IndexOf(IntToStr(aVal)) >= 0 then
+      begin
+        WriteLn('ERROR: Duplicate address ', aVal, ' in -a list');
+        Halt(1);
+      end;
+      aSeen.Add(IntToStr(aVal));
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := Byte(aVal);
+    end;
+    if Length(Result) = 0 then
+    begin
+      WriteLn('ERROR: empty -a list');
+      Halt(1);
+    end;
+  finally
+    aSeen.Free;
+    aParts.Free;
+  end;
+end;
+
+var
+  aAddrs: TBytes;
+  aBaud: Integer;
   aUseCRC: Boolean;
   aWeight, aMaxW, aDiv: Double;
   aDecimals: Integer;
@@ -456,6 +517,9 @@ var
   aStatusStr: string;
   aCOPVal, aErrVal: Integer;
   aDelay: Integer;
+  aDev: TMockDeviceTransport;
+  aAddrList: string;
+  I: Integer;
 begin
   if HasFlag('-h') or HasFlag('-?') then
     PrintUsage;
@@ -468,12 +532,8 @@ begin
     Halt(2);
   end;
 
-  aAddr := StrToIntDef(ArgValue('-a', '1'), 1);
-  if (aAddr < 1) or (aAddr > 159) then
-  begin
-    WriteLn('ERROR: Address must be 1..159');
-    Halt(1);
-  end;
+  aAddrList := ArgValue('-a', '1');
+  aAddrs := ParseAddrList(aAddrList);
 
   CRCForced := HasFlag('-crc') or HasFlag('-nocrc');
   aUseCRC := not HasFlag('-nocrc');
@@ -514,20 +574,27 @@ begin
   Serial.Purge;
   WriteLn('Port: ', PortName, '  (', aBaud, ' baud)');
 
-  { --- Создание мока --- }
-  Mock := TMockDeviceTransport.Create(Byte(aAddr), aUseCRC);
+  { --- Шина виртуальных приборов (мультиадрес: по прибору на адрес) --- }
+  Bus := TMockBus.Create;
   try
-    Mock.Weight := aWeight;
-    Mock.WeightStable := not HasFlag('-unstable');
-    Mock.WeightNegative := HasFlag('-negative');
-    Mock.WeightOverload := HasFlag('-overload');
-    Mock.WeightDecimalPlaces := aDecimals;
-    Mock.SerialNumber := aSN;
-    Mock.MaxWeight := aMaxW;
-    Mock.Division := aDiv;
-    Mock.DeviceModeIsGross := (ArgValue('-mode', 'g') <> 'n');
-    Mock.ResponseDelayMS := aDelay;
-    Mock.SystemStatus := Byte(aStatusVal);
+    for I := 0 to High(aAddrs) do
+    begin
+      aDev := Bus.AddDevice(aAddrs[I], aUseCRC);
+      aDev.Weight := aWeight;
+      aDev.WeightStable := not HasFlag('-unstable');
+      aDev.WeightNegative := HasFlag('-negative');
+      aDev.WeightOverload := HasFlag('-overload');
+      aDev.WeightDecimalPlaces := aDecimals;
+      if Length(aAddrs) > 1 then
+        aDev.SerialNumber := aSN + Cardinal(I)   { каждому прибору свой SN }
+      else
+        aDev.SerialNumber := aSN;
+      aDev.MaxWeight := aMaxW;
+      aDev.Division := aDiv;
+      aDev.DeviceModeIsGross := (ArgValue('-mode', 'g') <> 'n');
+      aDev.ResponseDelayMS := aDelay;
+      aDev.SystemStatus := Byte(aStatusVal);
+    end;
 
     aErrArg := ArgValue('-err', '');
     if aErrArg <> '' then
@@ -542,12 +609,21 @@ begin
         aErrVal := StrToIntDef(aErrStr, 0)
       else
         aErrVal := StrToIntDef('$' + aErrStr, 0);
-      Mock.SimulateError(Byte(aCOPVal), Byte(aErrVal));
-      WriteLn(Format('Simulating error $%02X on COP $%02X', [aErrVal, aCOPVal]));
+      for I := 0 to Bus.Count - 1 do
+        Bus.Device(I).SimulateError(Byte(aCOPVal), Byte(aErrVal));
+      WriteLn(Format('Simulating error $%02X on COP $%02X (all devices)', [aErrVal, aCOPVal]));
     end;
 
-    WriteLn(Format('Address: $%02X  CRC: %s  Weight: %s  Decimals: %d',
-      [Mock.Address, IfThen(Mock.UseCRC, 'ON', 'OFF (auto)'), FloatToStr(Mock.Weight), Mock.WeightDecimalPlaces]));
+    Write(Format('Devices (%d): ', [Bus.Count]));
+    for I := 0 to Bus.Count - 1 do
+    begin
+      if I > 0 then
+        Write(', ');
+      Write(Format('$%02X (SN %d)', [Bus.Device(I).Address, Bus.Device(I).SerialNumber]));
+    end;
+    WriteLn;
+    WriteLn(Format('CRC: %s  Weight: %s  Decimals: %d',
+      [IfThen(Bus.Device(0).UseCRC, 'ON', 'OFF (auto)'), FloatToStr(Bus.Device(0).Weight), Bus.Device(0).WeightDecimalPlaces]));
     WriteLn;
 
     KbEnabled := not HasFlag('-nokb');
@@ -568,7 +644,7 @@ begin
       [FrameCount, ByteCount]));
 
   finally
-    Mock.Free;
+    Bus.Free;
     Serial.Free;
   end;
 end.

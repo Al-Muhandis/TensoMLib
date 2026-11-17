@@ -27,7 +27,7 @@ unit mock_server;
 interface
 
 uses
-  Classes, SysUtils, core, bcd, frames, transport
+  Classes, SysUtils, Contnrs, core, bcd, frames, transport
   ;
 
 type
@@ -204,6 +204,35 @@ type
     function SetBaudRate(aBaudRate: LongInt): Boolean;
     procedure Flush;
     function GetLastErrorMessage: string;
+  end;
+
+  { TMockBus — «шина RS-485» из НЕСКОЛЬКИХ виртуальных приборов Тензо-М
+    (мультиадресный режим: ручная среда «одна шина, несколько адресов»).
+
+    Входящий кадр маршрутизируется ПРИБОРУ ПО АДРЕСУ (протокол адресный,
+    ParseFrame валидирует адрес) — отвечает только адресат, остальная шина
+    молчит. Прибор, сменивший адрес командой COP $A0 (SetNetworkAddress),
+    с этого момента доступен под НОВЫМ адресом — старый замолкает. }
+  TMockBus = class
+  private
+    fMocks: TFPObjectList;   { owns TMockDeviceTransport }
+  public
+    constructor Create;
+    destructor Destroy; override;
+
+    { Создать виртуальный прибор на адресе шины. }
+    function AddDevice(aAddress: Byte; aUseCRC: Boolean = True): TMockDeviceTransport;
+    function Count: Integer;
+    function Device(aIndex: Integer): TMockDeviceTransport;
+
+    { Найти прибор, которому адресован кадр; False — кадр не разобрался ни
+      под одним адресом шины (тишина: битый CRC/чужой адрес — реальная шина
+      молчит, адрес при битом кадре не восстанавливается). }
+    function TryRoute(const aBody, aRaw: TBytes; aUseCRC: Boolean;
+      out aParsed: TParsedFrame; out aMock: TMockDeviceTransport): Boolean;
+
+    { Синхронная настройка CRC всех приборов (автоопределение слушателя). }
+    procedure SetUseCRC(aUseCRC: Boolean);
   end;
 
 implementation
@@ -926,6 +955,66 @@ begin
   else
     Result := 1.0;
   end;
+end;
+
+{ === TMockBus === }
+
+constructor TMockBus.Create;
+begin
+  inherited Create;
+  fMocks := TFPObjectList.Create;   { OwnsObjects = True }
+end;
+
+destructor TMockBus.Destroy;
+begin
+  FreeAndNil(fMocks);
+  inherited Destroy;
+end;
+
+function TMockBus.AddDevice(aAddress: Byte; aUseCRC: Boolean): TMockDeviceTransport;
+begin
+  Result := TMockDeviceTransport.Create(aAddress, aUseCRC);
+  fMocks.Add(Result);
+end;
+
+function TMockBus.Count: Integer;
+begin
+  Result := fMocks.Count;
+end;
+
+function TMockBus.Device(aIndex: Integer): TMockDeviceTransport;
+begin
+  Result := TMockDeviceTransport(fMocks[aIndex]);
+end;
+
+function TMockBus.TryRoute(const aBody, aRaw: TBytes; aUseCRC: Boolean;
+  out aParsed: TParsedFrame; out aMock: TMockDeviceTransport): Boolean;
+var
+  I: Integer;
+  aDev: TMockDeviceTransport;
+begin
+  Result := False;
+  aParsed := Default(TParsedFrame);
+  aMock := nil;
+  for I := 0 to fMocks.Count - 1 do
+  begin
+    aDev := TMockDeviceTransport(fMocks[I]);
+    try
+      aParsed := ParseFrame(aBody, aRaw, aDev.Address, aUseCRC);
+      aMock := aDev;
+      Exit(True);
+    except
+      { не этот адрес — пробуем следующий прибор шины }
+    end;
+  end;
+end;
+
+procedure TMockBus.SetUseCRC(aUseCRC: Boolean);
+var
+  I: Integer;
+begin
+  for I := 0 to fMocks.Count - 1 do
+    TMockDeviceTransport(fMocks[I]).UseCRC := aUseCRC;
 end;
 
 end.
