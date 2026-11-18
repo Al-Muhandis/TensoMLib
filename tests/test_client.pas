@@ -44,6 +44,11 @@ type
     { Статус }
     procedure Test_GetSystemStatus;
 
+    { Смена адреса (A0h) }
+    procedure Test_SetNetworkAddress_ResponseFromNewAddr;
+    procedure Test_SetNetworkAddress_ResponseFromOldAddr;
+    procedure Test_SetNetworkAddress_FollowsDevice;
+
     { Ошибки прибора }
     procedure Test_DeviceError_EEh;
     procedure Test_UnsupportedCommand_FDh;
@@ -347,6 +352,73 @@ begin
 
     aStatus := fDev.GetSystemStatus;
     AssertEquals('Status', $41, aStatus);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ === Смена адреса (A0h) === }
+
+{ Прибор отвечает уже с НОВОГО адреса (так делает мок-сервер) —
+  команда должна быть принята, объект переезжает вместе с прибором. }
+procedure TTestClient.Test_SetNetworkAddress_ResponseFromNewAddr;
+var
+  aRespFrame: TBytes;
+begin
+  SetupMock(True);
+  try
+    aRespFrame := BuildFrame($05, COP_SET_ADDRESS, nil, True);
+    fMock.QueueResponse(aRespFrame);
+
+    fDev.SetNetworkAddress($05);
+    AssertEquals('Address follows the device', $05, fDev.Address);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ Часть прошивок отвечает ещё со СТАРОГО адреса — тоже допустимо. }
+procedure TTestClient.Test_SetNetworkAddress_ResponseFromOldAddr;
+var
+  aRespFrame: TBytes;
+begin
+  SetupMock(True);
+  try
+    aRespFrame := BuildFrame($01, COP_SET_ADDRESS, nil, True);
+    fMock.QueueResponse(aRespFrame);
+
+    fDev.SetNetworkAddress($05);
+    AssertEquals('Device is on the new address anyway', $05, fDev.Address);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ После смены адреса последующий запрос уходит на НОВЫЙ адрес и ответ
+  с него принимается: прибор и объект клиента согласованы. }
+procedure TTestClient.Test_SetNetworkAddress_FollowsDevice;
+var
+  aRespFrame, aData: TBytes;
+  W: TWeightData;
+begin
+  SetupMock(True);
+  try
+    aRespFrame := BuildFrame($05, COP_SET_ADDRESS, nil, True);
+    fMock.QueueResponse(aRespFrame);
+    fDev.SetNetworkAddress($05);
+
+    Initialize(aData);
+    SetLength(aData, 4);
+    aData[0] := $05; aData[1] := $00; aData[2] := $00; aData[3] := $11;
+    aRespFrame := BuildFrame($05, COP_GET_BRUTTO, aData, True);
+    fMock.QueueResponse(aRespFrame);
+
+    W := fDev.GetBruttoWeight;
+    AssertEquals('Weight from the new address', 0.5, W.Weight, 0.001);
+    AssertEquals('Sent to the new address', 2, fMock.GetSentCount);
   finally
     fDev.Free;
     fMock.Free;

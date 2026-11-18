@@ -65,9 +65,10 @@ type
     procedure RaiseProtocolError(const aMsg: string);
     procedure RaiseTimeoutError(const aMsg: string);
     procedure RaiseTransportError(const aMsg: string);
-    function SendCommand(aCOP: Byte; const aData: TBytes = nil): TParsedFrame;
+    function SendCommand(aCOP: Byte; const aData: TBytes = nil;
+      aAlsoAcceptAddr: Byte = 0): TParsedFrame;
     procedure SendRequestOnce(const aReqFrame: TBytes);
-    function ReceiveResponseOnce: TParsedFrame;
+    function ReceiveResponseOnce(aAlsoAcceptAddr: Byte = 0): TParsedFrame;
     procedure ClassifyResponse(const aParsed: TParsedFrame; aCOP: Byte);
     procedure DoFrameLog(aDirection: TFrameDirection; const aHex: string);
     function IsRetryableException(E: Exception): Boolean;
@@ -135,7 +136,10 @@ type
     { Передать состояние весоизмерительной системы (BFh). }
     function GetSystemStatus: Byte;
 
-    { Присвоить устройству новый сетевой адрес (A0h). }
+    { Присвоить устройству новый сетевой адрес (A0h).
+      Прибор после принятия команды отвечает уже с нового адреса (мок) или со
+      старого (часть прошивок) — принимаются оба варианта. При успехе объект
+      «переезжает» вместе с прибором: дальнейшие запросы идут на новый адрес. }
     procedure SetNetworkAddress(aNewAddr: Byte);
 
     { === Дискретные входы/выходы === }
@@ -264,7 +268,8 @@ begin
 end;
 
 { === SendCommand: только оркестрация попыток === }
-function TTensoMDevice.SendCommand(aCOP: Byte; const aData: TBytes): TParsedFrame;
+function TTensoMDevice.SendCommand(aCOP: Byte; const aData: TBytes;
+  aAlsoAcceptAddr: Byte): TParsedFrame;
 var
   aReqFrame: TBytes;
   aAttempt, aMaxAttempts: Integer;
@@ -285,7 +290,7 @@ begin
   begin
     try
       SendRequestOnce(aReqFrame);
-      Result := ReceiveResponseOnce;
+      Result := ReceiveResponseOnce(aAlsoAcceptAddr);
     except
       { Повторяем только ошибки, явно классифицированные как повторяемые (см. IsRetryableException):
           ETensoMTransportError и ETensoMFrameError.
@@ -329,8 +334,10 @@ end;
 
 { Опрашивает транспорт до получения и разбора одного кадра или до истечения fResponseTimeout.
   Кидает ETensoMTimeoutError при таймауте; исключения ParseFrame (CRC/структура кадра) пробрасываются как есть.
+  AAlsoAcceptAddr — второй допустимый адрес отправителя кадра (0 = только fAddress).
+  Нужен для смены адреса (A0): прибор может ответить уже с НОВОГО адреса.
   Логирует полученный кадр при успехе. }
-function TTensoMDevice.ReceiveResponseOnce: TParsedFrame;
+function TTensoMDevice.ReceiveResponseOnce(aAlsoAcceptAddr: Byte): TParsedFrame;
 var
   aCollector: TFrameCollector;
   aRawResp, aBody, aRaw: TBytes;
@@ -362,7 +369,22 @@ begin
         DoFrameLog(fdReceive, fLastResponseHex);
 
         { Может бросить исключение при CRC-ошибке/некорректном адресе }
-        Result := ParseFrame(aBody, aRaw, fAddress, fUseCRC);
+        try
+          Result := ParseFrame(aBody, aRaw, fAddress, fUseCRC);
+        except
+          on E: ETensoMProtocolError do
+          begin
+            { Смена адреса (A0): прибор отвечает уже с НОВОГО адреса. Кадр
+              валиден, если адресован нам же по этому второму адресу (0 =
+              «второй адрес не разрешён»). CRC проверяется внутри повторного
+              ParseFrame; чужой адрес пробрасывается как есть. }
+            if (aAlsoAcceptAddr > 0) and (Length(aBody) > 0) and
+               (aBody[0] = aAlsoAcceptAddr) then
+              Result := ParseFrame(aBody, aRaw, aAlsoAcceptAddr, fUseCRC)
+            else
+              raise;
+          end;
+        end;
         aParseOK := True;
         Break;
       end;
@@ -564,7 +586,11 @@ begin
   end;
   SetLength(aData, 1);
   aData[0] := aNewAddr;
-  SendCommand(COP_SET_ADDRESS, aData);
+  { Ответ может прийти и со старого, и с нового адреса — допускаем новый }
+  SendCommand(COP_SET_ADDRESS, aData, aNewAddr);
+  { Прибор переехал: объект следует за ним, иначе следующий запрос уйдёт
+    на старый (уже молчащий) адрес и закончится таймаутом }
+  fAddress := aNewAddr;
 end;
 
 { === Дискретные входы/выходы === }
