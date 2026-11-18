@@ -55,7 +55,7 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="..\src\errors.pas"/>
+        <Filename Value="..\src\tensom_errors.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>

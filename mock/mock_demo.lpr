@@ -18,7 +18,7 @@ program mock_demo;
 uses
   SysUtils,
   core in '../src/core.pas',
-  errors in '../src/errors.pas',
+  tensom_errors in '../src/tensom_errors.pas',
   client in '../src/client.pas',
   mock_server in 'mock_server.pas';
 
