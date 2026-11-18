@@ -407,7 +407,9 @@ begin
   if not aParseOK then
   begin
     fLastResponseHex := '';
-    RaiseTimeoutError('Device response timeout');
+    { Адрес в сообщении: на многоприборной шине KD_MES один порт опрашивает
+      несколько видов — без адреса не понять, какой прибор молчит }
+    RaiseTimeoutError(Format('Device $%02X response timeout', [fAddress]));
   end;
 end;
 
@@ -492,33 +494,41 @@ begin
   if Length(aPF.Data) < 4 then
     RaiseFrameError(Format('Incomplete response C1h: %d byte(s)', [Length(aPF.Data)]));
 
-  aMaxRaw := DecodePackedBCD(Copy(aPF.Data, 0, 3));
-  aDecimals := Integer(aPF.Data[3] and $07);
-  aDecimalPlaces := aDecimals;
-  if (aPF.Data[3] and $20) <> 0 then
-    aDeviceMode := 'GROSS' // = БРУТТО
-  else
-    aDeviceMode := 'NET'; // = НЕТТО
+  { Ошибки декодирования (битый BCD-ниббл и т.п.) — как в C2h/C3h —
+    ошибка целостности кадра (ETensoMFrameError), а не семантика:
+    повтор запроса имеет смысл }
+  try
+    aMaxRaw := DecodePackedBCD(Copy(aPF.Data, 0, 3));
+    aDecimals := Integer(aPF.Data[3] and $07);
+    aDecimalPlaces := aDecimals;
+    if (aPF.Data[3] and $20) <> 0 then
+      aDeviceMode := 'GROSS' // = БРУТТО
+    else
+      aDeviceMode := 'NET'; // = НЕТТО
 
-  aDivisor := 1.0;
-  for I := 0 to aDecimals - 1 do
-    aDivisor *= 10.0;
-  aMaxWeight := aMaxRaw / aDivisor;
+    aDivisor := 1.0;
+    for I := 0 to aDecimals - 1 do
+      aDivisor *= 10.0;
+    aMaxWeight := aMaxRaw / aDivisor;
 
-  if Length(aPF.Data) >= 6 then
-  begin
-    aDivRaw := DecodePackedBCD(Copy(aPF.Data, 4, 2));
-    aDivision := aDivRaw / aDivisor;
+    if Length(aPF.Data) >= 6 then
+    begin
+      aDivRaw := DecodePackedBCD(Copy(aPF.Data, 4, 2));
+      aDivision := aDivRaw / aDivisor;
+    end;
+
+    if Length(aPF.Data) >= 7 then
+      aADCFreqCode := aPF.Data[6];       // Freq, индекс 6
+
+    if Length(aPF.Data) >= 8 then
+      aVSEN := aPF.Data[7];              // VSEN, индекс 7
+
+    if Length(aPF.Data) >= 9 then
+      aFilterCode := aPF.Data[8];        // Filtr, индекс 8 — теперь верно
+  except
+    on E: Exception do
+      RaiseFrameError(Format('Device config analysis error: %s', [E.Message]));
   end;
-
-  if Length(aPF.Data) >= 7 then
-    aADCFreqCode := aPF.Data[6];       // Freq, индекс 6
-
-  if Length(aPF.Data) >= 8 then
-    aVSEN := aPF.Data[7];              // VSEN, индекс 7
-
-  if Length(aPF.Data) >= 9 then
-    aFilterCode := aPF.Data[8];        // Filtr, индекс 8 — теперь верно
 end;
 
 procedure TTensoMDevice.SetBaudRate(aRateCode: Byte);
