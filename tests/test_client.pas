@@ -86,6 +86,8 @@ type
     procedure Test_Retry_EEhNotRetried;
     procedure Test_Retry_FDhNotRetried;
     procedure Test_Retry_COPMismatchNotRetried;
+    procedure Test_Retry_AddressMismatchRetried;
+    procedure Test_Retry_AddressMismatchExhausted;
 
     { Протоколирование кадра }
     procedure Test_FrameLog_NotCalledWhenNil;
@@ -988,6 +990,71 @@ begin
       1, fMock.GetSentCount);
     AssertTrue('Error should mention COP codes',
       Pos('instead of', fDev.LastError) > 0);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ Ответ с чужого адреса — ретраибельная ошибка связи: на многоприборной
+  шине это обычно поздний ответ соседа, Flush перед повтором гасит хвост. }
+procedure TTestClient.Test_Retry_AddressMismatchRetried;
+var
+  aForeign, aOwn, aData: TBytes;
+  W: TWeightData;
+begin
+  SetupMock(True);
+  try
+    fDev.RetryCount := 2;
+
+    Initialize(aData);
+    SetLength(aData, 4);
+    aData[0] := $50; aData[1] := $00; aData[2] := $00; aData[3] := $11;
+
+    { Первый ответ — с чужого адреса (поздний ответ соседа по шине),
+      второй — свой, корректный }
+    aForeign := BuildFrame($09, COP_GET_BRUTTO, aData, True);
+    aOwn := BuildFrame($01, COP_GET_BRUTTO, aData, True);
+    fMock.QueueResponse(aForeign);
+    fMock.QueueResponse(aOwn);
+
+    W := fDev.GetBruttoWeight;
+    AssertEquals('Weight from the own response', 5.0, W.Weight, 0.001);
+    AssertEquals('Should send twice (mismatch is retried)', 2, fMock.GetSentCount);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ Без ретраев чужой адрес — исключение (разновидность ошибки протокола). }
+procedure TTestClient.Test_Retry_AddressMismatchExhausted;
+var
+  aForeign: TBytes;
+  aData: TBytes;
+  aRaised: Boolean;
+begin
+  SetupMock(True);
+  try
+    Initialize(aData);
+    SetLength(aData, 4);
+    aData[0] := $50; aData[1] := $00; aData[2] := $00; aData[3] := $11;
+    aForeign := BuildFrame($09, COP_GET_BRUTTO, aData, True);
+    fMock.QueueResponse(aForeign);
+
+    aRaised := False;
+    try
+      fDev.GetBruttoWeight;
+    except
+      on E: ETensoMAddressMismatchError do
+        aRaised := True;
+    end;
+
+    AssertTrue('Should raise ETensoMAddressMismatchError', aRaised);
+    AssertTrue('Is a protocol error subclass',
+      ETensoMAddressMismatchError.InheritsFrom(ETensoMProtocolError));
+    AssertEquals('Should send only once (no retries configured)',
+      1, fMock.GetSentCount);
   finally
     fDev.Free;
     fMock.Free;

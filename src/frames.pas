@@ -289,7 +289,7 @@ begin
     raise ETensoMFrameError.Create('Frame too short');
 
   if aBody[0] <> aExpectedAddress then
-    raise ETensoMProtocolError.CreateFmt('Response from address %d, expected %d', [aBody[0], aExpectedAddress]);
+    raise ETensoMAddressMismatchError.CreateFmt('Response from address %d, expected %d', [aBody[0], aExpectedAddress]);
 
   aDataEnd := Length(aBody);
   if aUseCRC then

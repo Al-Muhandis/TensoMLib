@@ -16,6 +16,7 @@ unit tensom_errors;
     ├── ETensoMDeviceError
     │
     └── ETensoMProtocolError
+          └── ETensoMAddressMismatchError
 }
 
 {$mode objfpc}{$H+}
@@ -45,8 +46,13 @@ type
   { Ошибка, возвращённая самим прибором через EEh. }
   ETensoMDeviceError = class(ETensoMError);
 
-  { Ошибка протокола/семантики обмена: неверный адрес, неожиданный COP, неподдерживаемая команда и т.п. }
+  { Ошибка протокола/семантики обмена: неожиданный COP, неподдерживаемая команда и т.п. }
   ETensoMProtocolError = class(ETensoMError);
+
+  { Ответ пришёл с чужого сетевого адреса. На одиночном приборе это признак
+    неисправности, на многоприборной шине (RS-485) — чаще всего поздний
+    ответ соседа, поэтому клиент ретраит её как ошибку связи. }
+  ETensoMAddressMismatchError = class(ETensoMProtocolError);
 
 implementation
 

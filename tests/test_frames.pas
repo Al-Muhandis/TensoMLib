@@ -708,10 +708,10 @@ begin
   try
     ParseFrame(aBody, aBody, $01, False);
   except
-    on E: ETensoMProtocolError do
+    on E: ETensoMAddressMismatchError do
       aRaised := True;
   end;
-  AssertTrue('Should raise ETensoMProtocolError on wrong address', aRaised)
+  AssertTrue('Should raise ETensoMAddressMismatchError on wrong address', aRaised)
 end;
 
 procedure TTestFrames.Test_Parse_TooShort;
