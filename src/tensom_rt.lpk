@@ -37,6 +37,10 @@
         <UnitName Value="frames"/>
       </Item>
       <Item>
+        <Filename Value="tensom_errors.pas"/>
+        <UnitName Value="tensom_errors"/>
+      </Item>
+      <Item>
         <Filename Value="transport.pas"/>
         <UnitName Value="transport"/>
       </Item>
