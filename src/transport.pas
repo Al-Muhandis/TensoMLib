@@ -23,7 +23,13 @@ uses
   ;
 
 type
-  { Интерфейс транспорта }
+  { Интерфейс транспорта.
+
+    Жизненный цикл: библиотека собирается с {$INTERFACES CORBA} — подсчёта
+    ссылок НЕТ. TTensoMDevice хранит интерфейс как простую ссылку: владелец
+    транспорта обязан жить дольше клиента, транспорт освобождается ПОСЛЕ
+    TTensoMDevice.Free (так в TTensoMScale из KD_MES: DestroyDevice, потом
+    транспорт). }
   ITensoMTransport = interface
     ['{F98621B0-59BC-4728-B348-2C4B962731B7}']
     function Connect(const aPortName: string; aBaudRate: LongInt; aDataBits: Byte = 8; aParity: Char = 'N';
