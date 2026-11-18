@@ -540,6 +540,11 @@ begin
 
   aWeight := StrToFloatDef(ArgValue('-w', '0'), 0.0);
   aDecimals := StrToIntDef(ArgValue('-decimals', '1'), 1);
+  if (aDecimals < 0) or (aDecimals > 3) then
+  begin
+    WriteLn('ERROR: -decimals must be 0..3 (CON byte holds 0..7, protocol uses 0..3), got ', aDecimals);
+    Halt(2);
+  end;
   aSN := Cardinal(StrToInt64Def(ArgValue('-sn', '12345'), 12345));
   aMaxW := StrToFloatDef(ArgValue('-maxw', '150'), 150.0);
   aDiv := StrToFloatDef(ArgValue('-div', '0.5'), 0.5);
@@ -599,6 +604,13 @@ begin
     aErrArg := ArgValue('-err', '');
     if aErrArg <> '' then
     begin
+      { Без двоеточия COPStr оказался бы пустым - ошибка «на COP $00» вместо
+        внятного сообщения о неверном формате опции }
+      if Pos(':', aErrArg) = 0 then
+      begin
+        WriteLn('ERROR: -err expects COP:ERR format (e.g. -err C3:06), got "', aErrArg, '"');
+        Halt(2);
+      end;
       aCOPStr := Copy(aErrArg, 1, Pos(':', aErrArg) - 1);
       aErrStr := Copy(aErrArg, Pos(':', aErrArg) + 1, MaxInt);
       if (Length(aCOPStr) > 1) and (aCOPStr[1] = '$') then
