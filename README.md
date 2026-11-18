@@ -7,6 +7,7 @@
 - Низкоуровневый кодек кадров протокола Тензо-М (кодирование скорости, длины, CRC-8, байт-стаффинг FF→FF FE)
 - Иерархия исключений по семантике ошибок (транспорт, таймаут, CRC, кадр, устройство, протокол)
 - Модульный транспортный слой: интерфейс `ITensoMTransport`, мок `TMockTransport` для тестирования, реализация `TSerialTransport` для COM-порта (LazSynaSer + WinAPI DCB fallback для нестандартных USB-COM драйверов)
+- Мок-сервер прибора: `TMockDeviceTransport` (виртуальный прибор — сам разбирает запросы и отвечает по протоколу), `TMockBus` (мультиадресная шина из нескольких приборов) и консольный `tenso_mock_server` (реальный COM-порт через виртуальную пару, несколько приборов на шине, клавиатурное управление весом)
 - Высокоуровневый клиент `TTensoMDevice` с автоматическими ретраями, настраиваемой политикой повторов, логированием кадров и автоопределением режима CRC
 - Полный набор команд протокола: вес, тарирование, конфигурация, серийный номер, дискретные входы/выходы, индикаторы, счётчики, калибровка, дозирование, инициативная передача
 - Функции сканирования доступных COM-портов (Windows: QueryDosDeviceA, Linux: /dev/ttyS*, /dev/ttyUSB*, /dev/ttyACM*)
@@ -21,7 +22,7 @@
 src/
   core.pas              — типы, константы COP, записи (TWeightData, TParsedFrame, TErrorInfo),
                            вспомогательные функции (HexBytes, ErrorDescription)
-  errors.pas            — иерархия исключений:
+  tensom_errors.pas     — иерархия исключений:
                            ETensoMError
                              ├── ETensoMTransportError
                              │     └── ETensoMTimeoutError
@@ -29,6 +30,7 @@ src/
                              │     └── ETensoMCRCError
                              ├── ETensoMDeviceError
                              └── ETensoMProtocolError
+                                   └── ETensoMAddressMismatchError
   crc8.pas              — CRC-8, полином $69 (CRCUpdate / MakeCRC / VerifyCRC)
   bcd.pas               — упакованный BCD little-endian: DecodePackedBCD, EncodePackedBCD, DecodeWeight
   frames.pas            — BuildFrame, TFrameCollector (конечный автомат), ParseFrame
@@ -52,6 +54,16 @@ tests/
   run_tests_gui.lpr     — GUI-запускатор юнит-тестов (FPCUnit)
   integration/
     tensotest.lpr       — утилита тестирования реального прибора (XML-отчёт + лог кадров)
+
+mock/
+  mock_server.pas       — TMockDeviceTransport: виртуальный прибор (сам разбирает
+                           запросы и отвечает по протоколу) + TMockBus:
+                           мультиадресная шина из нескольких приборов
+  tenso_mock_server.lpr — консольный мок-сервер на реальном COM-порту (виртуальная
+                           пара com0com/socat): `-a 1,3,5` — несколько приборов
+                           на одной шине, клавиатурное управление весом,
+                           имитация ошибок EEh/FDh, автоопределение CRC
+  test_mock_server.pas  — тесты мока через полный стек TTensoMDevice
 
 demo/
   console/
@@ -145,21 +157,25 @@ end;
 ### Юнит-тесты (консольные)
 
 ```bash
-# Из корня репозитория
-fpc -MObjFPC -Sh -FUsrc -Futests tests/run_tests.lpr
-./run_tests --format=plain
+# Из каталога tests/: вывод в ../lib (в .gitignore), исходники — ../src
+cd tests
+fpc -MObjFPC -Sh -FE../lib -FU../lib -Fu../src run_tests.lpr
+../lib/run_tests --format=plain
 ```
+
+Пути `in '../src/*.pas'` в тестах разрешаются относительно каталога
+запуска компилятора — собирайте из `tests/`. Вывод направлен в `lib/`,
+чтобы не засорять `src/` файлами .ppu/.o (в IDE это приводит к ошибке
+«Ambiguous unit found»).
 
 ### Консольное демо
 
-```bash
-# Linux / macOS
-fpc -MObjFPC -Sh -FUsrc demo/console/demo.lpr
-./demo
+Для сборки с реальным портом в пути юнитов нужны исходники LazSerial
+(при установке через OPM: `%LocalAppData%\lazarus\onlinepackagemanager\packages\LazSerial`):
 
-# Windows
-fpc -MObjFPC -Sh -FUsrc demo/console/demo.lpr
-demo.exe
+```bash
+fpc -MObjFPC -Sh -FElib -FUlib -Fusrc -Fu"<путь к LazSerial>" demo/console/demo.lpr
+./lib/demo
 ```
 
 ### GUI-монитор
@@ -173,10 +189,23 @@ demo.exe
 ### Интеграционные тесты (с реальным прибором)
 
 ```bash
-fpc -MObjFPC -Sh -FUsrc -Futests tests/integration/tensotest.lpr
-./tensotest /dev/ttyUSB0 1 3000
+fpc -MObjFPC -Sh -FElib -FUlib -Fusrc -Fu"<путь к LazSerial>" tests/integration/tensotest.lpr
+./lib/tensotest /dev/ttyUSB0 1 3000
 # или на Windows:
-# tensotest COM3 1 3000
+# ./lib/tensotest COM3 1 3000
+```
+
+### Мок-сервер прибора (без железа)
+
+Программа `tenso_mock_server` эмулирует прибор на реальном COM-порту
+через виртуальную пару портов (Windows: com0com, Linux: socat) — удобно
+для ручной проверки потребителя (например, KD_MES) без весов:
+
+```bash
+# Windows: COM10 <-> COM11 (com0com)
+tenso_mock_server -p COM10 -a 1,3,5 -w 123.4 -stable
+# -a 1,3,5 — ТРИ виртуальных прибора на одной шине (SN = база+i);
+# клавиатура: стрелки — вес, s — стабильность, z — ноль, ? — справка
 ```
 
 Результат: XML-отчёт и лог кадров в текущем каталоге.
@@ -195,7 +224,7 @@ fpc -MObjFPC -Sh -FUsrc -Futests tests/integration/tensotest.lpr
 
 | Метод | COP | Описание |
 |-------|-----|----------|
-| `GetDeviceConfig(out MaxWeight, Division, DecimalPlaces, Mode, ADCFreqCode, FilterCode)` | C1h | Параметры прибора: макс. вес, дискретность, режим (БРУТТО/НЕТТО), частота АЦП, фильтр |
+| `GetDeviceConfig(out MaxWeight, Division, DecimalPlaces, Mode, ADCFreqCode, VSEN, FilterCode)` | C1h | Параметры прибора: макс. вес, дискретность, режим (БРУТТО/НЕТТО), частота АЦП, VSEN, фильтр |
 | `SetBaudRate(RateCode)` | DBh | Установка скорости обмена (переводит и прибор, и COM-порт) |
 | `SetFilter(FilterCode)` | DAh | Полоса пропускания фильтра |
 | `SetADCFrequency(FreqCode)` | D9h | Частота обновления АЦП |
@@ -206,7 +235,7 @@ fpc -MObjFPC -Sh -FUsrc -Futests tests/integration/tensotest.lpr
 |-------|-----|----------|
 | `GetSerialNumber: Cardinal` | A1h | Серийный номер (3 байта) |
 | `GetSystemStatus: Byte` | BFh | Байт состояния весоизмерительной системы |
-| `SetNetworkAddress(NewAddr)` | A0h | Присвоение нового сетевого адреса ($01..$9F) |
+| `SetNetworkAddress(NewAddr)` | A0h | Присвоение нового сетевого адреса ($01..$9F). Ответ принимается и со старого, и с нового адреса; после подтверждения клиент переключается на новый адрес |
 
 ### Дискретные входы/выходы
 
@@ -260,7 +289,7 @@ fpc -MObjFPC -Sh -FUsrc -Futests tests/integration/tensotest.lpr
 
 | Метод | Описание |
 |-------|----------|
-| `AutoDetectCRC: Boolean` | Автоопределение режима CRC: пробует без CRC, затем с CRC. Меняет свойство `UseCRC` |
+| `AutoDetectCRC: Boolean` | Автоопределение режима CRC: пробует без CRC, затем с CRC. Меняет свойство `UseCRC`. На время детекта ретраи (`RetryCount`/`RetryDelayMS`) глушатся |
 
 ### Свойства
 
@@ -269,12 +298,23 @@ fpc -MObjFPC -Sh -FUsrc -Futests tests/integration/tensotest.lpr
 | `Address` | Byte | Сетевой адрес прибора (только чтение) |
 | `UseCRC` | Boolean | Включение/выключение CRC в кадрах |
 | `ResponseTimeout` | Cardinal | Таймаут ожидания ответа, мс (по умолчанию 700) |
-| `RetryCount` | Integer | Количество повторов при транспортных ошибках и ошибках кадров (0 = без повторов). Ошибки прибора (EEh), неподдерживаемые команды (FDh) и semantic-ошибки **не** повторяются |
+| `RetryCount` | Integer | Количество повторов при транспортных ошибках, ошибках кадров и ответе с чужого адреса (ETensoMAddressMismatchError: на шине это обычно поздний ответ соседа; Flush перед повтором гасит хвост линии). Ошибки прибора (EEh), неподдерживаемые команды (FDh) и semantic-ошибки **не** повторяются |
 | `RetryDelayMS` | Cardinal | Пауза между повторами, мс (по умолчанию 0) |
 | `OnFrameLog` | TFrameLogEvent | Callback для логирования каждого отправленного и полученного кадра (hex-строка) |
 | `LastRequestHex` | string | Hex-дамп последнего отправленного кадра |
 | `LastResponseHex` | string | Hex-дамп последнего полученного кадра |
 | `LastError` | string | Текст последней ошибки |
+
+## Потокобезопасность
+
+Библиотека **не синхронизирована**: один транспорт (COM-порт) должен
+опрашиваться одним потоком. Для мультиадресной шины создайте один
+`TTensoMDevice` на адрес прибора и опрашивайте их последовательно из
+нити-владельца порта (так делает KD_MES: `TTensoMScaleBus` с видами
+`TTensoMScale` на общий `TSerialTransport`).
+
+Жизненный цикл: интерфейс транспорта CORBA (без подсчёта ссылок) —
+транспорт освобождается **после** `TTensoMDevice.Free`.
 
 ## Зависимости
 
