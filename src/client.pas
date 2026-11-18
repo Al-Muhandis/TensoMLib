@@ -201,7 +201,9 @@ type
     { === Диагностика === }
 
     { Автоопределение режима CRC: пробует без CRC, затем с CRC.
-      Меняет fUseCRC. Возвращает True если прибор ответил. }
+      Меняет fUseCRC. Возвращает True если прибор ответил.
+      На время детекта ретраи (RetryCount/RetryDelayMS) глушатся:
+      иначе неудачный детект тянется 2x(RetryCount+1) таймаутов. }
     function AutoDetectCRC: Boolean;
   end;
 
@@ -738,31 +740,46 @@ end;
 function TTensoMDevice.AutoDetectCRC: Boolean;
 var
   aSavedCRC: Boolean;
+  aSavedRetryCount: Integer;
+  aSavedRetryDelay: Cardinal;
 begin
-  { Пытаемся запросить вес без CRC }
+  { Детект не должен умножаться на ретраи: две фазы по (RetryCount+1)
+    попыток — это лишние секунды ожидания на старте сервиса. Внутри
+    детекта ретраи глушатся, пользовательская политика восстанавливается
+    в finally. }
   aSavedCRC := fUseCRC;
-  fUseCRC := False;
+  aSavedRetryCount := fRetryCount;
+  aSavedRetryDelay := fRetryDelayMS;
+  fRetryCount := 0;
+  fRetryDelayMS := 0;
   try
-    GetBruttoWeight;
-    Result := True; { Ответили без CRC }
-  except
-    on E: ETensoMError do
-    begin
-      { Не ответили без CRC — пробуем с CRC }
-      fUseCRC := True;
-      try
-        GetBruttoWeight;
-        Result := True; { Ответили с CRC }
-      except
-        on E2: ETensoMError do
-        begin
-          { Ни один режим не сработал — восстанавливаем и выходим }
-          fUseCRC := aSavedCRC;
-          RaiseTimeoutError(Format('Device does not respond: without CRC: %s; with CRC: %s',
-            [E.Message, E2.Message]));
+    { Пытаемся запросить вес без CRC }
+    fUseCRC := False;
+    try
+      GetBruttoWeight;
+      Result := True; { Ответили без CRC }
+    except
+      on E: ETensoMError do
+      begin
+        { Не ответили без CRC — пробуем с CRC }
+        fUseCRC := True;
+        try
+          GetBruttoWeight;
+          Result := True; { Ответили с CRC }
+        except
+          on E2: ETensoMError do
+          begin
+            { Ни один режим не сработал — восстанавливаем и выходим }
+            fUseCRC := aSavedCRC;
+            RaiseTimeoutError(Format('Device does not respond: without CRC: %s; with CRC: %s',
+              [E.Message, E2.Message]));
+          end;
         end;
       end;
     end;
+  finally
+    fRetryCount := aSavedRetryCount;
+    fRetryDelayMS := aSavedRetryDelay;
   end;
 end;
 
