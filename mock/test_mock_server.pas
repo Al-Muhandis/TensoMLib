@@ -742,22 +742,20 @@ end;
 { === Смена адреса === }
 
 procedure TTestMockServer.Test_SetAddress;
+var
+  W: TWeightData;
 begin
   SetupDevice($01, True);
   try
-    { Note: SetNetworkAddress changes the device address in the mock,
-      but the client still expects responses from the old address.
-      This test verifies the mock processes the command. }
-    try
-      fDev.SetNetworkAddress($05);
-      { После смены адреса мок будет отвечать с адресом $05,
-        но клиент ожидает $05 — и мок-сервер уже поменял адрес.
-        Однако клиент проверяет ответ от адреса fAddress=$01.
-        Поэтому ожидаем ошибку адреса. }
-    except
-      on E: ETensoMProtocolError do
-        ; { Ожидаемо — адрес в ответе не совпадёт }
-    end;
+    { Смена адреса: мок отвечает уже с НОВОГО адреса, клиент принимает
+      оба варианта и переезжает за прибором }
+    fDev.SetNetworkAddress($05);
+    AssertEquals('Прибор и клиент на новом адресе', $05, fDev.Address);
+
+    { Последующий запрос уходит на новый адрес и разбирается }
+    fMock.Weight := 7.5;
+    W := fDev.GetBruttoWeight;
+    AssertEquals('Вес с нового адреса', 7.5, W.Weight, 0.001);
   finally
     fDev.Free;
     fMock.Free;
