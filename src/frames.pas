@@ -74,9 +74,18 @@ function BuildFrame(aAddress, aCOP: Byte; const aData: TBytes; aUseCRC: Boolean)
 var
   aBody: TBytes = nil;
   aOutBuf: TBytes = nil;
+  aLen: Integer;
   B: Byte;
   C: Byte;
-begin;
+begin
+  { Лимит протокола: тело (Adr + COP + Data [+ CRC]) не длиннее FRAME_MAX_LEN.
+    Более длинный кадр не соберёт ни один приёмник (TFrameCollector: Frame
+    too long), поэтому режем его сразу на передающей стороне. }
+  if (2 + Length(aData) + Ord(aUseCRC)) > FRAME_MAX_LEN then
+    raise EArgumentOutOfRangeException.CreateFmt(
+      'Frame payload too long: %d bytes, maximum %d',
+      [2 + Length(aData) + Ord(aUseCRC), FRAME_MAX_LEN]);
+
   { Build body: Adr + COP + Data }
   SetLength(aBody, 2);
   aBody[0] := aAddress;
@@ -95,29 +104,27 @@ begin;
     aBody[High(aBody)] := C;
   end;
 
-  SetLength(aOutBuf, 0);
-
-  { Старт разделителя }
-  SetLength(aOutBuf, 1);
+  { Кадр: стартовый FF + тело с байт-стаффингом + два конечных FF.
+    Выделяем буфер сразу с верхней оценкой (по 2 байта на байт тела +
+    3 разделителя) и заполняем подряд — без перераспределений. }
+  SetLength(aOutBuf, 3 + 2 * Length(aBody));
   aOutBuf[0] := FRAME_DELIMITER;
-
-  { Тело с байтовой начинкой }
+  aLen := 1;
   for B in aBody do
   begin
-    SetLength(aOutBuf, Length(aOutBuf) + 1);
-    aOutBuf[High(aOutBuf)] := B;
+    aOutBuf[aLen] := B;
+    Inc(aLen);
     if B = FRAME_DELIMITER then
     begin
-      SetLength(aOutBuf, Length(aOutBuf) + 1);
-      aOutBuf[High(aOutBuf)] := FRAME_STUFF_BYTE;
+      aOutBuf[aLen] := FRAME_STUFF_BYTE;
+      Inc(aLen);
     end;
   end;
+  aOutBuf[aLen]     := FRAME_DELIMITER;
+  aOutBuf[aLen + 1] := FRAME_DELIMITER;
+  Inc(aLen, 2);
 
-  { Конечные разделители: FF FF }
-  SetLength(aOutBuf, Length(aOutBuf) + 2);
-  aOutBuf[High(aOutBuf) - 1] := FRAME_DELIMITER;
-  aOutBuf[High(aOutBuf)]     := FRAME_DELIMITER;
-
+  SetLength(aOutBuf, aLen);
   Result := aOutBuf;
 end;
 

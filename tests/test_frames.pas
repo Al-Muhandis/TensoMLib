@@ -31,6 +31,8 @@ type
     procedure Test_Build_WithData_NoCRC;
     procedure Test_Build_ByteStuffing;
     procedure Test_Build_NoData_Minimal;
+    procedure Test_Build_PayloadTooLong_Raises;
+    procedure Test_Build_PayloadAtLimit_OK;
 
     { TFrameCollector }
     procedure Test_Collector_SimpleFrame;
@@ -169,6 +171,43 @@ begin
   aFrame := BuildFrame($01, COP_ZERO, nil, False);
   AssertEquals('Length', 5, Length(aFrame));
   AssertEquals('Frame[2] = C0h', COP_ZERO, aFrame[2]);
+end;
+
+{ Тело длиннее лимита протокола (2 + Data + CRC > FRAME_MAX_LEN) режется
+  сразу на передающей стороне: ни один приёмник такой кадр не соберёт. }
+procedure TTestFrames.Test_Build_PayloadTooLong_Raises;
+var
+  aData: TBytes;
+  aRaised: Boolean;
+begin
+  aData := MakeArr([$01]);
+  SetLength(aData, 253); { 2 (Adr+COP) + 253 + 1 (CRC) = 256 > 255 }
+
+  aRaised := False;
+  try
+    BuildFrame($01, COP_DISPLAY_MSG, aData, True);
+  except
+    on E: EArgumentOutOfRangeException do
+      aRaised := True;
+  end;
+  AssertTrue('Should raise EArgumentOutOfRangeException on oversized payload', aRaised);
+end;
+
+{ Граничный случай: тело ровно в лимит собирается. }
+procedure TTestFrames.Test_Build_PayloadAtLimit_OK;
+var
+  aData: TBytes;
+  aFrame: TBytes;
+begin
+  aData := MakeArr([$01]);
+  SetLength(aData, 252); { 2 + 252 + 1 = 255 = FRAME_MAX_LEN }
+  FillChar(aData[0], Length(aData), $01); { без FF — без стаффинга }
+
+  aFrame := BuildFrame($01, COP_DISPLAY_MSG, aData, True);
+  { 1 стартовый FF + 255 байт тела + 2 конечных FF }
+  AssertEquals('Frame length at the limit', 258, Length(aFrame));
+  AssertEquals('Starts with FF', $FF, aFrame[0]);
+  AssertEquals('Ends with FF', $FF, aFrame[High(aFrame)]);
 end;
 
 { --- TFrameCollector --- }
