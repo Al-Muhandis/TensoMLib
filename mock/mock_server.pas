@@ -110,6 +110,7 @@ type
       aDecimalPlaces: Integer): TBytes;
     function EncodeBCD3(aValue: Cardinal): TBytes;
     function EncodeBCD2(aValue: Word): TBytes;
+    procedure AppendResponse(const aData: TBytes);
     procedure ProcessPendingData;
   public
     constructor Create(aAddress: Byte; aUseCRC: Boolean = True);
@@ -774,6 +775,18 @@ end;
 
 { === Разбор накопленных данных от клиента === }
 
+{ Дописать ответ в конец буфера ответов }
+procedure TMockDeviceTransport.AppendResponse(const aData: TBytes);
+var
+  aOldLen: Integer;
+begin
+  if Length(aData) = 0 then
+    Exit;
+  aOldLen := Length(fResponseBuffer);
+  SetLength(fResponseBuffer, aOldLen + Length(aData));
+  Move(aData[0], fResponseBuffer[aOldLen], Length(aData));
+end;
+
 procedure TMockDeviceTransport.ProcessPendingData;
 var
   aCollector: TFrameCollector;
@@ -781,50 +794,59 @@ var
   aParsed: TParsedFrame;
   aResponse: TBytes;
   aReqCOP: Byte;
+  aConsumed: Integer;
   J: Integer;
 begin
   if Length(fSendBuffer) = 0 then
     Exit;
 
+  aConsumed := 0;
   aCollector := TFrameCollector.Create;
   try
     for J := 0 to High(fSendBuffer) do
     begin
-      if aCollector.Feed(fSendBuffer[J], aBody, aRaw) then
-      begin
-        { Кадр получен — разбираем и формируем ответ }
-        aReqCOP := $00;
-        try
-          aParsed := ParseFrame(aBody, aRaw, fAddress, fUseCRC);
-          aReqCOP := aParsed.COP;
-          HandleRequest(aParsed, aResponse);
-        except
-          on E: Exception do
-          begin
-            { Если не смогли разобрать — отвечаем ошибкой CRC.
-              Если COP неизвестен, используем $00 в ответе. }
-            BuildErrorResponse(aReqCOP, ERR_CRC, aResponse);
-          end;
-        end;
-
-        { Помещаем ответ в буфер ответов }
-        if Length(aResponse) > 0 then
-        begin
-          { Добавляем к существующему буферу ответов }
-          SetLength(fResponseBuffer, Length(fResponseBuffer) + Length(aResponse));
-          Move(aResponse[0], fResponseBuffer[Length(fResponseBuffer) - Length(aResponse)],
-            Length(aResponse));
-        end;
-
-        Break; { Обрабатываем один кадр за раз }
+      aBody := nil;
+      aRaw := nil;
+      try
+        if not aCollector.Feed(fSendBuffer[J], aBody, aRaw) then
+          Continue;
+      except
+        { Несобираемый поток (кадр длиннее лимита протокола): сбрасываем весь
+          буфер, чтобы мусор не отравлял следующие обмены; клиент получит
+          таймаут и повторит запрос. }
+        aConsumed := Length(fSendBuffer);
+        Break;
       end;
+
+      { Кадр получен — разбираем и формируем ответ }
+      aReqCOP := $00;
+      aResponse := nil;
+      try
+        aParsed := ParseFrame(aBody, aRaw, fAddress, fUseCRC);
+        aReqCOP := aParsed.COP;
+        HandleRequest(aParsed, aResponse);
+      except
+        on E: Exception do
+        begin
+          { Если не смогли разобрать — отвечаем ошибкой CRC.
+            Если COP неизвестен, используем $00 в ответе. }
+          BuildErrorResponse(aReqCOP, ERR_CRC, aResponse);
+        end;
+      end;
+
+      AppendResponse(aResponse);
+      aConsumed := J + 1;
+      Break; { Обрабатываем один кадр за раз, хвост остаётся в буфере }
     end;
   finally
     aCollector.Free;
+    { Удаляем из буфера только обработанный кадр: частичный кадр (доставка
+      с реального порта рвёт кадры на куски) и следующий в очереди остаются
+      до следующего Receive — раньше здесь терялось всё, что не вошло в
+      обработанный кадр. }
+    if aConsumed > 0 then
+      fSendBuffer := Copy(fSendBuffer, aConsumed, Length(fSendBuffer) - aConsumed);
   end;
-
-  { Очищаем обработанные данные из буфера отправки }
-  SetLength(fSendBuffer, 0);
 end;
 
 { === ITensoMTransport === }
@@ -857,6 +879,8 @@ function TMockDeviceTransport.Send(const aData: TBytes): Integer;
 var
   aOldLen: Integer;
 begin
+  if Length(aData) = 0 then
+    Exit(0);
   { Добавляем данные в буфер отправки }
   aOldLen := Length(fSendBuffer);
   SetLength(fSendBuffer, aOldLen + Length(aData));

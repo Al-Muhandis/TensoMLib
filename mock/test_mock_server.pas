@@ -93,6 +93,11 @@ type
 
     { Смена адреса }
     procedure Test_SetAddress;
+
+    { Доставка кадра частями и очередь кадров }
+    procedure Test_ChunkedRequest_TwoSends;
+    procedure Test_QueuedRequests_BothAnswered;
+    procedure Test_GarbagePrefix_ThenRequest;
   end;
 
   { TTestMockBus — мультиадресная «шина» из нескольких виртуальных приборов
@@ -756,6 +761,95 @@ begin
     fMock.Weight := 7.5;
     W := fDev.GetBruttoWeight;
     AssertEquals('Вес с нового адреса', 7.5, W.Weight, 0.001);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ === Доставка кадра частями и очередь кадров === }
+
+{ Кадр приходит двумя порциями, как с реального COM-порта: частичный кадр
+  должен дожидаться продолжения в буфере, а не выбрасываться. }
+procedure TTestMockServer.Test_ChunkedRequest_TwoSends;
+var
+  aReq, aResp, aBody, aRaw: TBytes;
+  aParsed: TParsedFrame;
+  aCol: TFrameCollector;
+  aHalf, I: Integer;
+  aDone: Boolean;
+begin
+  SetupDevice($01, True);
+  try
+    aReq := BuildFrame($01, COP_GET_SERIAL, nil, True);
+    aHalf := Length(aReq) div 2;
+    fMock.Send(Copy(aReq, 0, aHalf));
+
+    aResp := fMock.Receive(0);
+    AssertEquals('На половину кадра - тишина', 0, Length(aResp));
+
+    fMock.Send(Copy(aReq, aHalf, Length(aReq) - aHalf));
+    aResp := fMock.Receive(0);
+    AssertTrue('Ответ после второй порции', Length(aResp) > 0);
+
+    { Ответ собирается в валидный кадр A1h }
+    aCol := TFrameCollector.Create;
+    try
+      aDone := False;
+      for I := 0 to High(aResp) do
+        if aCol.Feed(aResp[I], aBody, aRaw) then
+        begin
+          aDone := True;
+          Break;
+        end;
+      AssertTrue('Ответ собирается в кадр', aDone);
+      aParsed := ParseFrame(aBody, aRaw, $01, True);
+      AssertEquals('COP ответа A1h', COP_GET_SERIAL, aParsed.COP);
+    finally
+      aCol.Free;
+    end;
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ Два запроса в очереди: оба должны получить ответы, второй не теряется. }
+procedure TTestMockServer.Test_QueuedRequests_BothAnswered;
+var
+  aReq, aResp: TBytes;
+begin
+  SetupDevice($01, True);
+  try
+    aReq := BuildFrame($01, COP_GET_SERIAL, nil, True);
+    fMock.Send(aReq);
+    fMock.Send(aReq);
+
+    aResp := fMock.Receive(0);
+    AssertTrue('Ответ на первый кадр', Length(aResp) > 0);
+
+    aResp := fMock.Receive(0);
+    AssertTrue('Ответ на второй кадр не потерян', Length(aResp) > 0);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ Обрывок кадра в начале буфера не должен мешать последующему полному
+  кадру: кадрирование отбрасывает мусор, запрос обрабатывается. }
+procedure TTestMockServer.Test_GarbagePrefix_ThenRequest;
+var
+  aReq, aResp: TBytes;
+begin
+  SetupDevice($01, True);
+  try
+    aReq := BuildFrame($01, COP_GET_SERIAL, nil, True);
+    fMock.Send(Copy(aReq, 0, 3));
+    fMock.Send(aReq);
+
+    aResp := fMock.Receive(0);
+    AssertTrue('Ответ пришёл, несмотря на обрывок в начале', Length(aResp) > 0);
   finally
     fDev.Free;
     fMock.Free;
