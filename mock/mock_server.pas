@@ -193,7 +193,6 @@ type
     { === Лог отправленных клиентом данных === }
 
     function GetLastSentHex: string;
-    function GetSentFrameCount: Integer;
 
     { === ITensoMTransport === }
     function Connect(const {%H-}aPortName: string; aBaudRate: LongInt; {%H-}aDataBits: Byte = 8; {%H-}aParity: Char = 'N';
@@ -321,11 +320,8 @@ var
   aCON: Byte;
 begin
   Result := nil;
-  { Вычисляем целое значение с учётом десятичных знаков }
-  aMultiplier := 1.0;
-  if aDecimalPlaces = 1 then aMultiplier := 10.0
-  else if aDecimalPlaces = 2 then aMultiplier := 100.0
-  else if aDecimalPlaces = 3 then aMultiplier := 1000.0;
+  { Вычисляем целое значение с учётом десятичных знаков (0..3, как в CON) }
+  aMultiplier := IntPower(10, aDecimalPlaces);
 
   if aNegative then
     aRaw := Abs(Round(aWeight * aMultiplier))
@@ -959,26 +955,6 @@ end;
 function TMockDeviceTransport.GetLastSentHex: string;
 begin
   Result := HexBytes(fSendBuffer);
-end;
-
-function TMockDeviceTransport.GetSentFrameCount: Integer;
-begin
-  { Приблизительная оценка: считаем количество кадров по разделителям FF FF }
-  Result := 0;
-end;
-
-{ === Вспомогательная функция (не экспортируется из core) === }
-
-function Power10(aExp: Integer): Double;
-begin
-  case aExp of
-    0: Result := 1.0;
-    1: Result := 10.0;
-    2: Result := 100.0;
-    3: Result := 1000.0;
-  else
-    Result := 1.0;
-  end;
 end;
 
 { === TMockBus === }
