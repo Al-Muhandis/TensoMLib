@@ -210,6 +210,11 @@ function TSerialTransport.Connect(const aPortName: string; aBaudRate: LongInt; a
   end;
 
 begin
+  { Повторный Connect при открытом порте: закрываем прежнее соединение,
+    иначе старый TBlockSerial перезаписывается в fSerial без освобождения }
+  if fConnected then
+    Disconnect;
+
 {$IF DEFINED(LAZSERIAL) OR DEFINED(MSWINDOWS) OR DEFINED(LINUX)}
   try
     DoConnect;
@@ -297,7 +302,11 @@ begin
 
     if fSerial.LastError <> 0 then
     begin
-      fLastError := fSerial.LastErrorDesc;
+      { Тихое отсутствие данных (RecvPacket по таймауту) — не ошибка: клиент
+        опрашивает порт циклом, и каждый пустой тик не должен портить
+        fLastError (иначе половина успешного ожидания выглядит как «Timeout») }
+      if fSerial.LastError <> ErrTimeout then
+        fLastError := fSerial.LastErrorDesc;
       Exit;
     end;
 
