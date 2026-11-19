@@ -1,0 +1,176 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  # Релиз = поднять версию в src/tensom_rt.lpk, тег v<версия>, push
+  # (та же конвенция, что в fp-idn/fp-rdap). Тег обязан совпадать с
+  # версией пакета, иначе архив исходников тега не соответствует
+  # заявленной версии релиза.
+  check-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches tensom_rt.lpk version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'EOF'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("src/tensom_rt.lpk").getroot()
+          v = root.find("./Package/Version")
+          if v is None:
+              sys.exit("no Package/Version element in src/tensom_rt.lpk")
+          parts = [int(v.get(a, "0")) for a in ("Major", "Minor", "Release", "Build")]
+          # v1.0 для Major=1 Minor=0, но без пустого хвоста .0: v1.5, v1.5.2.4
+          while len(parts) > 2 and parts[-1] == 0:
+              parts.pop()
+          expected = "v" + ".".join(map(str, parts))
+          tag = os.environ["TAG"]
+          if tag != expected:
+              sys.exit("tag %s does not match tensom_rt.lpk version %s "
+                       "(bump the lpk version or fix the tag)" % (tag, expected))
+          print("tag %s matches tensom_rt.lpk version" % tag)
+          EOF
+
+  # tenso_mock_server — консольная утилита без LCL: достаточно plain fpc
+  # и исходников LazSynaSer из репозитория TLazSerial.
+  build:
+    timeout-minutes: 45
+    # Один run-блок для обеих ОС матрицы — bash доступен на обеих.
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            binary: tenso_mock_server
+            asset: tenso_mock_server_linux64
+          - os: windows-latest
+            binary: tenso_mock_server.exe
+            asset: tenso_mock_server_win64.exe
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout LazSerial sources
+        uses: actions/checkout@v4
+        with:
+          repository: JurassicPork/TLazSerial
+          path: TLazSerial
+
+      - name: Install FreePascal (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fp-compiler fp-units-fcl
+
+      # Официальный инсталлятор Lazarus 4.0 win64 (внутри FPC 3.2.2) с
+      # download.lazarus-ide.org; bin\x86_64-win64 самодостаточен
+      # (fpc.exe + ppcx64.exe + fpc.cfg). Запасной choco-путь исчерпан:
+      # "комбинированный" инсталлятор пакета freepascal в тихом режиме
+      # ставит только i386-win32 — ppcx64.exe после установки на всём диске
+      # отсутствует (лог 8-го прогона). Скачивание: с Azure-раннеров хост
+      # медленный (3 попытки по 600 с не хватило на 250 МБ), поэтому -C -
+      # (докачка между --retry) и --max-time на попытку. PATH пишем в
+      # $GITHUB_PATH (machine-PATH шаги джобы не подхватывают).
+      # Инсталлятор НЕ запускаем: тихий InnoSetup висит на неинтерактивном
+      # десктопе раннера (10-й прогон: файл скачан за 69 с, затем 44 мин
+      # тишины до капа — вероятно, невидимый UAC/диалог). Вместо запуска —
+      # распаковка: innoextract 1.9 понимает InnoSetup 6 (пакет в choco —
+      # древний 1.5, не годится). fpc из бандла самодостаточен (fpc.exe +
+      # ppcx64.exe в bin\x86_64-win64), но fpc.cfg генерирует postinstall
+      # инсталлятора — пишем минимальный сами (RTL + units). curl -4
+      # обязателен: по IPv6 раннер не получает ни байта (прогоны 5 и 9).
+      - name: Install FreePascal (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          curl -4 -sSL --retry 3 --connect-timeout 15 --max-time 600 \
+            -o lazarus-setup.exe \
+            -w "installer: HTTP %{http_code}, %{size_download} bytes, %{time_total}s\n" \
+            "https://download.lazarus-ide.org/Lazarus%20Windows%2064%20bits/Lazarus%204.0/lazarus-4.0-fpc-3.2.2-win64.exe"
+          curl -4 -sSL --retry 3 --connect-timeout 15 --max-time 120 \
+            -o innoextract.zip \
+            -w "innoextract: HTTP %{http_code}, %{size_download} bytes\n" \
+            "https://github.com/dscharrer/innoextract/releases/download/1.9/innoextract-1.9-windows.zip"
+          7z x -y innoextract.zip -o"C:\\inno" >/dev/null
+          /c/inno/innoextract.exe -silent -d "$(cygpath -w /c/Lazarus)" lazarus-setup.exe
+          FPCBIN=$(find /c/Lazarus -type f -name fpc.exe -path "*x86_64-win64*" | head -1)
+          if [ -z "$FPCBIN" ]; then
+            echo "fpc.exe not found in /c/Lazarus; dirs:" >&2
+            { find /c/Lazarus -maxdepth 3 -type d 2>/dev/null || true; } | head -40 >&2
+            exit 1
+          fi
+          FPCDIR=$(dirname "$FPCBIN")
+          UNITS=$(cygpath -w "$FPCDIR/../../units/x86_64-win64")
+          echo "FPCDIR: $FPCDIR"
+          ls "$FPCDIR/../../units/x86_64-win64" | head -15
+          # units в бандле разложены по подпапкам-пакетам (rtl, rtl-objpas,
+          # fcl-base, ...): StrUtils/Math живут в rtl-objpas, поэтому
+          # перечисляем каждый пакет, а не только rtl.
+          { printf -- '-Fu%s\n' "$UNITS"
+            for d in "$FPCDIR/../../units/x86_64-win64"/*/; do
+              printf -- '-Fu%s\n' "$(cygpath -w "${d%/}")"
+            done; } > "$FPCDIR/fpc.cfg"
+          cat "$FPCDIR/fpc.cfg"
+          echo "$(cygpath -w "$FPCDIR")" >> "$GITHUB_PATH"
+
+      # -Px86_64 с родным win64-драйвером избыточен, но безвреден.
+      # -Sc обязателен: в коде есть C-операторы (+=), а системный fpc.cfg
+      # (Lazarus на машинах, apt на CI-ubuntu) обычно включает их сам
+      # (-Sgic), в отличие от нашего самописного cfg распакованного бандла.
+      # mkdir ПОСЛЕ cd: ../lib должен быть lib/ в корне репо, а не каталогом
+      # рядом. mkdir обязателен — fpc каталоги -FE/-FU сам не создаёт.
+      - name: Build tenso_mock_server
+        run: |
+          cd mock
+          mkdir -p ../lib
+          fpc -Px86_64 -MObjFPC -Sc -Sh -O2 -FE../lib -FU../lib -Fu../src -Fu../TLazSerial tenso_mock_server.lpr
+          mv ../lib/${{ matrix.binary }} ../lib/${{ matrix.asset }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-server-${{ matrix.os }}
+          path: lib/${{ matrix.asset }}
+
+  release:
+    needs: [ check-version, build ]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # bash -e: "A && B" с несработавшим A (релиза ещё нет — норма для
+      # первого запуска) возвращает 1 и убивал шаг до gh release create.
+      # Поэтому идемпотентность через if: условие в if от -e освобождено.
+      - name: Create GitHub release and attach binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # джоба без checkout — gh без git-репозитория требует GH_REPO
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists"
+          else
+            gh release create "$TAG" \
+              --title "TensoMLib $TAG" \
+              --generate-notes
+          fi
+          gh release upload "$TAG" dist/* --clobber

@@ -1,0 +1,80 @@
+name: Run FreePascal tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install FreePascal and fpc-unit
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fp-compiler fp-units-fcl
+
+      # Пути 'in ../src/*.pas' в тестах разрешаются относительно каталога
+      # запуска компилятора — собираем из tests/ (см. README, «Сборка»).
+      # mkdir ПОСЛЕ cd: шаг стартует в корне репо, и ../lib должен попасть
+      # в корень репо, а не рядом с ним. mkdir обязателен — fpc каталоги
+      # -FE/-FU сам не создаёт («Error: Path does not exist»).
+      - name: Build unit tests
+        run: |
+          cd tests
+          mkdir -p ../lib
+          fpc -MObjFPC -Sh -O1 -FE../lib -FU../lib -Fu../src run_tests.lpr
+
+      # Код возврата FPCUnit-раннера — гейт CI (ненулевой при ошибках/падениях).
+      - name: Run unit tests
+        run: |
+          cd tests
+          ../lib/run_tests --all --format=plain
+
+      - name: Unit tests XML report
+        run: |
+          cd tests
+          ../lib/run_tests --all --format=xml > ../lib/run_tests.xml
+
+      # Тесты mock_server.pas — отдельный FPCUnit-раннер (mock/).
+      - name: Build mock tests
+        run: |
+          cd mock
+          mkdir -p ../lib
+          fpc -MObjFPC -Sh -O1 -FE../lib -FU../lib -Fu../src -Fu. test_mock.lpr
+
+      - name: Run mock tests
+        run: |
+          cd mock
+          ../lib/test_mock --all --format=plain
+
+      - name: Mock tests XML report
+        run: |
+          cd mock
+          ../lib/test_mock --all --format=xml > ../lib/test_mock.xml
+
+      # Smoke-сборка мок-сервера: ломает релизный пайплайн заранее,
+      # на каждом push, а не только на теге. Нужны только исходники
+      # LazSynaSer (юниты лежат в корне репозитория TLazSerial).
+      - name: Checkout LazSerial sources
+        uses: actions/checkout@v4
+        with:
+          repository: JurassicPork/TLazSerial
+          path: TLazSerial
+
+      - name: Smoke build mock server (Linux)
+        run: |
+          cd mock
+          mkdir -p ../lib
+          fpc -MObjFPC -Sh -O2 -FE../lib -FU../lib -Fu../src -Fu../TLazSerial tenso_mock_server.lpr
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: lib/*.xml

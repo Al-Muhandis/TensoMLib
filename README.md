@@ -210,6 +210,28 @@ tenso_mock_server -p COM10 -a 1,3,5 -w 123.4 -stable
 # клавиатура: стрелки — вес, s — стабильность, z — ноль, ? — справка
 ```
 
+## CI/CD
+
+GitHub Actions (`.github/workflows/`):
+
+- **tests.yml** — на каждый push в `main`/`master` и PR: сборка и прогон юнит-тестов
+  (`tests/run_tests` и `mock/test_mock`, FPCUnit, Ubuntu) + контрольная сборка
+  `tenso_mock_server` под Linux. XML-отчёты тестов прикладываются к прогону как артефакты.
+- **release.yml** — на пуш тега `v*`: проверка соответствия тега версии пакета
+  `src/tensom_rt.lpk`, сборка `tenso_mock_server` (linux64 + win64), GitHub Release
+  с автогенерированными заметками и бинарниками мок-сервера.
+
+Порядок выпуска релиза:
+
+```bash
+# 1. Поднять версию пакета в src/tensom_rt.lpk (Major/Minor/Release/Build), закоммитить
+# 2. Тег — строго v<версия пакета> (хвостовые .0 можно опускать: Major=1 Minor=0 -> v1.0)
+git tag v1.0 && git push && git push origin v1.0
+```
+
+Тег, не совпадающий с версией lpk, релиз заблокирует (в логе будет указана ожидаемая версия).
+Бинарники прикладываются автоматически: `tenso_mock_server_linux64`, `tenso_mock_server_win64.exe`.
+
 ## API клиента (TTensoMDevice)
 
 ### Весовые измерения
