@@ -48,3 +48,6 @@ src/tensom_rt.pas
 *.err
 demo/monitor/tenso_log.txt
 tests/ppas.bat
+
+# ZCode service folder
+.zcode/
