@@ -14,7 +14,7 @@
     </CompilerOptions>
     <Description Value="Библиотека для работы с устройствами по протоколу Тензо-М"/>
     <License Value="MIT"/>
-    <Version Major="1" Minor="5"/>
+    <Version Major="1" Minor="6"/>
     <Files>
       <Item>
         <Filename Value="bcd.pas"/>

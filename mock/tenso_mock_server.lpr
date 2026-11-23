@@ -65,7 +65,7 @@ uses
   ;
 
 const
-  APP_VERSION = '1.5';
+  APP_VERSION = '1.6';
   RECV_TIMEOUT_MS = 100;
 
 var
