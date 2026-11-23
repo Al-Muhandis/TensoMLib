@@ -16,7 +16,8 @@ program tensotest;
   Только безопасные команды только для чтения - не изменяет состояние устройства.
 
   Не гарантируется, что все тесты, помеченные как "необязательные", будут поддерживаться
-  Устройства TensoM (например, TV-003/05H поддерживает только C0,C1,C2,C3,C8:06,CE).
+  Устройствами TensoM (например, TV-003/05H поддерживает только C0,C1,C2,C3,C8:06,CE,
+  а TV-003/05D — только C0,C2,C3,CC(с байтом N),FD).
   Неудачные дополнительные тесты записываются как пропущенные (без СБОЕВ) и не
   влияют на код завершения.
 }
@@ -226,6 +227,22 @@ begin
   end;
 end;
 
+procedure TestGetDeviceVersion;
+var
+  aID: string;
+begin
+  try
+    aID := Dev.GetDeviceVersion;
+    RecordTest('Device type & version', 'FDh', True, aID, '',
+      Dev.LastRequestHex, Dev.LastResponseHex, '', True);
+  except
+    on E: Exception do
+      RecordTest('Device type & version', 'FDh', False, '',
+        E.Message + TransportErrSuffix,
+        Dev.LastRequestHex, Dev.LastResponseHex, '', True);
+  end;
+end;
+
 procedure TestGetSerialNumber;
 var
   aSN: Cardinal;
@@ -264,12 +281,12 @@ begin
       '      </config>';
     RecordTest('Device configuration', 'C1h', True,
       Format('max=%.2f div=%.2f dec=%d mode=%s', [aMaxW, aDiv_, aDecimals, aMode]),
-      '', Dev.LastRequestHex, Dev.LastResponseHex, aExtra);
+      '', Dev.LastRequestHex, Dev.LastResponseHex, aExtra, True);
   except
     on E: Exception do
       RecordTest('Device configuration', 'C1h', False, '',
         E.Message + TransportErrSuffix,
-        Dev.LastRequestHex, Dev.LastResponseHex);
+        Dev.LastRequestHex, Dev.LastResponseHex, '', True);
   end;
 end;
 
@@ -436,11 +453,11 @@ var
   S: string;
   aIsOpt: Boolean;
 begin
-  { TV-003/05H supports only counter #6 (max measured load).
-    All others are marked optional. }
+  { TV-003/05H supports only counter #6 (max measured load), TV-003/05D
+    does not support C8h at all — all counters are optional. }
   for I := COUNTER_MIN to COUNTER_MAX do
   begin
-    aIsOpt := (I <> 6);
+    aIsOpt := True;
     try
       aData := Dev.GetCounter(Byte(I));
       S := '';
@@ -503,6 +520,30 @@ begin
     on E: Exception do
       RecordTest('ADC code', 'CCh', False, '', E.Message + TransportErrSuffix, Dev.LastRequestHex, Dev.LastResponseHex,
         '', True);
+  end;
+end;
+
+{ ТВ-003/05Д: запрос CCh с байтом N=1 — текущий код АЦП }
+procedure TestGetADCCodeN1;
+var
+  aData: TBytes;
+  I: Integer;
+  S: string;
+begin
+  try
+    aData := Dev.GetADCCode(1);
+    S := '';
+    for I := 0 to High(aData) do
+    begin
+      if I > 0 then S += ' ';
+      S += IntToHex(aData[I], 2);
+    end;
+    RecordTest('ADC code (N=1)', 'CCh', True, Format('%d byte(s): %s', [Length(aData), S]), '', Dev.LastRequestHex,
+      Dev.LastResponseHex, '', True);
+  except
+    on E: Exception do
+      RecordTest('ADC code (N=1)', 'CCh', False, '', E.Message + TransportErrSuffix, Dev.LastRequestHex,
+        Dev.LastResponseHex, '', True);
   end;
 end;
 
@@ -623,7 +664,7 @@ var
   aPortSafe: string;
 begin
   aPortSafe := StringReplace(TestPort, ' ', '_', [rfReplaceAll]);
-  aPortSafe := StringReplace(aPortSafe, '\\', '_', [rfReplaceAll]);
+  aPortSafe := StringReplace(aPortSafe, '\', '_', [rfReplaceAll]);
   aPortSafe := StringReplace(aPortSafe, '/', '_', [rfReplaceAll]);
   aPortSafe := StringReplace(aPortSafe, ':', '_', [rfReplaceAll]);
   ReportFilename := Format('tensotest_%s_%s.xml',
@@ -689,7 +730,7 @@ begin
   WriteReportHeader;
 
   { --- Connect --- }
-  WriteProgress('[1/12] Connecting...');
+  WriteProgress('[1/13] Connecting...');
   Trans := TSerialTransport.Create;
   try
     if not Trans.Connect(TestPort, 9600) then
@@ -711,40 +752,44 @@ begin
     try
       { --- Run tests --- }
 
-      WriteProgress('[2/12] Auto-detect CRC...');
+      WriteProgress('[2/13] Auto-detect CRC...');
       TestAutoDetectCRC;
 
-      WriteProgress('[3/12] Serial number (opt)...');
+      WriteProgress('[3/13] Device type & version (opt)...');
+      TestGetDeviceVersion;
+
+      WriteProgress('[4/13] Serial number (opt)...');
       TestGetSerialNumber;
 
-      WriteProgress('[4/12] Device configuration...');
+      WriteProgress('[5/13] Device configuration (opt)...');
       TestGetDeviceConfig;
 
-      WriteProgress('[5/12] Single GROSS weight reading...');
+      WriteProgress('[6/13] Single GROSS weight reading...');
       TestGetBruttoWeight;
 
-      WriteProgress('[6/12] Single NET weight reading...');
+      WriteProgress('[7/13] Single NET weight reading...');
       TestGetNettoWeight;
 
-      WriteProgress('[7/12] System status (opt)...');
+      WriteProgress('[8/13] System status (opt)...');
       TestGetSystemStatus;
 
-      WriteProgress('[8/12] Discrete inputs / outputs (opt)...');
+      WriteProgress('[9/13] Discrete inputs / outputs (opt)...');
       TestGetDiscreteInputs;
       TestGetDiscreteOutputs;
 
-      WriteProgress('[9/12] Indicators & product code (opt)...');
+      WriteProgress('[10/13] Indicators & product code (opt)...');
       TestGetIndicators;
       TestGetProductCode;
 
-      WriteProgress('[10/12] Counters (#0..#9)...');
+      WriteProgress('[11/13] Counters (#0..#9)...');
       TestGetCounters;
 
-      WriteProgress('[11/12] Calibration & ADC (opt)...');
+      WriteProgress('[12/13] Calibration & ADC (opt)...');
       TestGetCalibrationParams;
       TestGetADCCode;
+      TestGetADCCodeN1;
 
-      WriteProgress('[12/12] Multiple weight readings...');
+      WriteProgress('[13/13] Multiple weight readings...');
       TestMultipleWeightReadings;
 
     finally;
