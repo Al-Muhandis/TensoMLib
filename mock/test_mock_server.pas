@@ -71,6 +71,15 @@ type
     procedure Test_CalibrationParams;
     procedure Test_ADCCode;
 
+    { Профили моделей прибора (ТВ-003/05Н, ТВ-003/05Д) }
+    procedure Test_Model05D_SupportedCommands;
+    procedure Test_Model05D_UnsupportedAnswersFD;
+    procedure Test_Model05D_NettoHasD5;
+    procedure Test_Model05D_ADCIncrement;
+    procedure Test_Model05D_DeviceVersion;
+    procedure Test_Model05N_SupportedCommands;
+    procedure Test_Model05N_UnsupportedAnswersFD;
+
     { Дозирование }
     procedure Test_DosingControl;
 
@@ -549,6 +558,194 @@ begin
     aCode := fDev.GetADCCode;
     AssertEquals('ADC code length', 2, Length(aCode));
     AssertEquals('ADC[0]', $80, aCode[0]);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ === Профили моделей (ТВ-003/05Н, ТВ-003/05Д) === }
+
+{ 05Д: поддерживаемые команды работают — C3h, C2h, C0h }
+procedure TTestMockServer.Test_Model05D_SupportedCommands;
+var
+  W: TWeightData;
+begin
+  SetupDevice($01, True);
+  try
+    fMock.Model := mmTV003_05D;
+    fMock.Weight := 12.5;
+    fMock.WeightStable := True;
+    fMock.WeightDecimalPlaces := 1;
+
+    W := fDev.GetBruttoWeight;   { C3h }
+    AssertEquals('Brutto', 12.5, W.Weight, 0.001);
+
+    W := fDev.GetNettoWeight;    { C2h }
+    AssertEquals('Netto', 12.5, W.Weight, 0.001);
+
+    fDev.Tare;                   { C0h }
+    AssertEquals('Tared', 0.0, fMock.Weight, 0.001);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ 05Д: команды вне набора профиля (A1h, C1h) — ответ FDh }
+procedure TTestMockServer.Test_Model05D_UnsupportedAnswersFD;
+var
+  aMaxW, aDiv: Double;
+  aDec: Integer;
+  aMode: string;
+  aFreq, aVSEN, aFilt: Byte;
+  aRaised: Boolean;
+begin
+  SetupDevice($01, True);
+  try
+    fMock.Model := mmTV003_05D;
+
+    aRaised := False;
+    try
+      fDev.GetSerialNumber;   { A1h — нет в наборе 05Д }
+    except
+      on E: ETensoMProtocolError do
+      begin
+        aRaised := True;
+        AssertTrue('FDh message', Pos('not supported', LowerCase(E.Message)) > 0);
+      end;
+    end;
+    AssertTrue('A1h should answer FDh', aRaised);
+
+    aRaised := False;
+    try
+      fDev.GetDeviceConfig(aMaxW, aDiv, aDec, aMode, aFreq, aVSEN, aFilt);  { C1h }
+    except
+      on E: ETensoMProtocolError do
+        aRaised := True;
+    end;
+    AssertTrue('C1h should answer FDh', aRaised);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ 05Д: ответ нетто несёт бит D5 CON, брутто — нет }
+procedure TTestMockServer.Test_Model05D_NettoHasD5;
+var
+  W: TWeightData;
+begin
+  SetupDevice($01, True);
+  try
+    fMock.Model := mmTV003_05D;
+    fMock.Weight := 42.0;
+    fMock.WeightStable := True;
+    fMock.WeightDecimalPlaces := 0;
+
+    W := fDev.GetNettoWeight;
+    AssertEquals('Netto', 42.0, W.Weight, 0.001);
+    AssertTrue('NettoMode (D5)', W.NettoMode);
+
+    W := fDev.GetBruttoWeight;
+    AssertEquals('Brutto', 42.0, W.Weight, 0.001);
+    AssertFalse('Brutto has no D5', W.NettoMode);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ 05Д: CCh с байтом N — N=1 текущий код (ADCRawCode), N=2 приращение
+  (ADCIncrementCode) }
+procedure TTestMockServer.Test_Model05D_ADCIncrement;
+var
+  aCode, aCur, aInc: TBytes;
+begin
+  SetupDevice($01, True);
+  try
+    fMock.Model := mmTV003_05D;
+
+    SetLength(aCur, 2);
+    aCur[0] := $80; aCur[1] := $01;
+    fMock.ADCRawCode := aCur;
+
+    SetLength(aInc, 4);
+    aInc[0] := $00; aInc[1] := $20; aInc[2] := $00; aInc[3] := $00;
+    fMock.ADCIncrementCode := aInc;
+
+    aCode := fDev.GetADCCode(1);
+    AssertEquals('Current code length', 2, Length(aCode));
+    AssertEquals('Current[1]', $01, aCode[1]);
+
+    aCode := fDev.GetADCCode(2);
+    AssertEquals('Increment code length', 4, Length(aCode));
+    AssertEquals('Increment[1]', $20, aCode[1]);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ 05Д: прямой запрос FDh возвращает строку идентификации }
+procedure TTestMockServer.Test_Model05D_DeviceVersion;
+begin
+  SetupDevice($01, True);
+  try
+    fMock.Model := mmTV003_05D;
+    fMock.DeviceName := 'TB003/05D';
+    fMock.DeviceVersion := '10.13AX';
+
+    AssertEquals('Identity', 'TB003/05D 10.13AX', fDev.GetDeviceVersion);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ 05Н: поддерживаемые команды работают — C1h, C8h }
+procedure TTestMockServer.Test_Model05N_SupportedCommands;
+var
+  aMaxW, aDiv: Double;
+  aDec: Integer;
+  aMode: string;
+  aFreq, aVSEN, aFilt: Byte;
+  aC: TBytes;
+begin
+  SetupDevice($01, True);
+  try
+    fMock.Model := mmTV003_05N;
+    fMock.MaxWeight := 300.0;
+    fMock.Division := 0.5;
+
+    fDev.GetDeviceConfig(aMaxW, aDiv, aDec, aMode, aFreq, aVSEN, aFilt);  { C1h }
+    AssertEquals('MaxWeight (C1h)', 300.0, aMaxW, 0.001);
+
+    aC := fDev.GetCounter(6);   { C8h — у 05Н это максимум нагрузки }
+    AssertEquals('Counter reply length', 4, Length(aC));
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ 05Н: CCh нет в наборе профиля — ответ FDh }
+procedure TTestMockServer.Test_Model05N_UnsupportedAnswersFD;
+var
+  aRaised: Boolean;
+begin
+  SetupDevice($01, True);
+  try
+    fMock.Model := mmTV003_05N;
+
+    aRaised := False;
+    try
+      fDev.GetADCCode;   { CCh — нет в наборе 05Н }
+    except
+      on E: ETensoMProtocolError do
+        aRaised := True;
+    end;
+    AssertTrue('CCh should answer FDh', aRaised);
   finally
     fDev.Free;
     fMock.Free;

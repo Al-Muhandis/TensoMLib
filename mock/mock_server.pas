@@ -19,6 +19,10 @@ unit mock_server;
     Mock.OnCommandReceived := @MyHandler;  // логирование входящих команд
     Mock.SimulateError(COP_GET_BRUTTO, ERR_GENERAL); // заставить отвечать ошибкой EEh
     Mock.SimulateUnsupported(COP_GET_DISPLAY);       // ответить FDh на конкретный COP
+
+  Профиль модели (Model) ограничивает набор команд, как у реального прибора:
+  неподдерживаемые команды получают ответ FDh со строкой идентификации
+  «DeviceName DeviceVersion» (mmTV003_05N — ТВ-003/05Н, mmTV003_05D — ТВ-003/05Д).
 }
 
 {$mode objfpc}{$H+}
@@ -36,6 +40,15 @@ type
     aData — payload полученного кадра (без адреса и COP).
     aHex — полный hex-дамп полученного кадра. }
   TCommandReceivedEvent = procedure(aCOP: Byte; const aData: TBytes; const aHex: string) of object;
+
+  { Профиль модели виртуального прибора: ограничивает набор поддерживаемых
+    команд, как у реальной прошивки. Неподдерживаемые команды получают
+    ответ FDh «не поддерживается» (со строкой идентификации). }
+  TMockModel = (
+    mmUniversal,   { весь протокол (поведение по умолчанию) }
+    mmTV003_05N,   { ТВ-003/05Н: C0h, C1h, C2h, C3h, C8h, CEh }
+    mmTV003_05D    { ТВ-003/05Д: C0h, C2h, C3h, CCh (байт N), FDh }
+  );
 
   { TMockDeviceTransport — транспорт-заглушка, эмулирующий прибор Тензо-М.
 
@@ -65,6 +78,9 @@ type
     fResponsePos: Integer;   { текущая позиция чтения из fResponseBuffer }
 
     { Состояние виртуального прибора }
+    fModel: TMockModel;
+    fDeviceName: string;
+    fDeviceVersion: string;
     fWeight: Double;
     fWeightStable: Boolean;
     fWeightOverload: Boolean;
@@ -80,6 +96,7 @@ type
     fCounters: array[0..9] of Cardinal;
     fCalibParams: TBytes;
     fADCCode: TBytes;
+    fADCIncrementCode: TBytes;
     fMaxWeight: Double;
     fDivision: Double;
     fDeviceModeIsGross: Boolean;
@@ -106,8 +123,9 @@ type
     procedure BuildUnsupportedResponse({%H-}aCOP: Byte; out aResponse: TBytes);
     function HasErrorCOP(aCOP: Byte; out aErrorCode: Byte): Boolean;
     function IsUnsupportedCOP(aCOP: Byte): Boolean;
+    function IsCOPSupportedByModel(aCOP: Byte): Boolean;
     function EncodeWeight(aWeight: Double; aStable, aOverload, aNegative: Boolean;
-      aDecimalPlaces: Integer): TBytes;
+      aDecimalPlaces: Integer; aNetto: Boolean): TBytes;
     function EncodeBCD3(aValue: Cardinal): TBytes;
     function EncodeBCD2(aValue: Word): TBytes;
     procedure AppendResponse(const aData: TBytes);
@@ -122,6 +140,14 @@ type
     property Address: Byte read fAddress;
 
     { === Конфигурация состояния прибора === }
+
+    { Профиль модели: ограничивает набор команд, как у реального прибора
+      (см. TMockModel). Неподдерживаемые команды — ответ FDh. }
+    property Model: TMockModel read fModel write fModel;
+
+    { Идентификация прибора — строка «NAME Vers» в ответе FDh }
+    property DeviceName: string read fDeviceName write fDeviceName;
+    property DeviceVersion: string read fDeviceVersion write fDeviceVersion;
 
     { Вес (используется для C2h, C3h, B8h) }
     property Weight: Double read fWeight write fWeight;
@@ -162,6 +188,10 @@ type
     { Калибровка и диагностика (CBh, CCh) }
     property CalibrationParams: TBytes read fCalibParams write fCalibParams;
     property ADCRawCode: TBytes read fADCCode write fADCCode;
+
+    { Приращение кода АЦП — ответ на запрос CCh с байтом N=2 (ТВ-003/05Д).
+      Пусто по умолчанию — ответится 4 байта LE со значением 8192. }
+    property ADCIncrementCode: TBytes read fADCIncrementCode write fADCIncrementCode;
 
     { Искусственная задержка ответа (мс) }
     property ResponseDelayMS: Cardinal read fDelayMS write fDelayMS;
@@ -259,6 +289,9 @@ begin
   fResponsePos := 0;
 
   { Значения по умолчанию — имитируют реальный прибор }
+  fModel := mmUniversal;
+  fDeviceName := 'TB003/05';
+  fDeviceVersion := '1.0';
   fWeight := 0.0;
   fWeightStable := True;
   fWeightOverload := False;
@@ -278,6 +311,7 @@ begin
 
   SetLength(fCalibParams, 0);
   SetLength(fADCCode, 0);
+  SetLength(fADCIncrementCode, 0);
 
   fMaxWeight := 150.0;
   fDivision := 0.5;
@@ -304,6 +338,7 @@ begin
   SetLength(fResponseBuffer, 0);
   SetLength(fCalibParams, 0);
   SetLength(fADCCode, 0);
+  SetLength(fADCIncrementCode, 0);
   SetLength(fErrorCOPs, 0);
   SetLength(fUnsupportedCOPs, 0);
   inherited;
@@ -312,7 +347,8 @@ end;
 { === Вспомогательные кодировщики === }
 
 function TMockDeviceTransport.EncodeWeight(aWeight: Double;
-  aStable, aOverload, aNegative: Boolean; aDecimalPlaces: Integer): TBytes;
+  aStable, aOverload, aNegative: Boolean; aDecimalPlaces: Integer;
+  aNetto: Boolean): TBytes;
 var
   aRaw: Int64;
   aMultiplier: Double;
@@ -342,6 +378,7 @@ begin
   if aStable then aCON := aCON or $10;
   if aOverload then aCON := aCON or $08;
   if aNegative then aCON := aCON or $80;
+  if aNetto then aCON := aCON or $20; { D5: режим «Нетто» (ТВ-003/05Д) }
 
   { Результат: 4 байта (W0, W1, W2, CON) }
   SetLength(Result, 4);
@@ -421,6 +458,26 @@ begin
   Result := False;
 end;
 
+{ Набор команд профиля модели. Профили повторяют наборы команд реальных прошивок:
+    ТВ-003/05Н (прил. 3 руководства по эксплуатации): C0h, C1h, C2h, C3h, C8h, CEh;
+    ТВ-003/05Д (п. 13.5 руководства, ПО 10.13АХ): C0h, C2h, C3h, CCh, FDh.
+  FDh включён в набор 05Д: прибор поддерживает прямой запрос идентификации.
+  Для 05Н запрос FDh не входит в набор — ответ FDh сформирует ограничение
+  профиля (реальный прибор отвечает FDh на любую неизвестную команду). }
+function TMockDeviceTransport.IsCOPSupportedByModel(aCOP: Byte): Boolean;
+begin
+  case fModel of
+    mmTV003_05N:
+      Result := aCOP in [COP_ZERO, COP_GET_SETTINGS, COP_GET_NETTO,
+        COP_GET_BRUTTO, COP_GET_COUNTER, COP_START_INIT_SEND];
+    mmTV003_05D:
+      Result := aCOP in [COP_ZERO, COP_GET_NETTO, COP_GET_BRUTTO,
+        COP_GET_ADC_CODE, COP_UNSUPPORTED];
+  else
+    Result := True;
+  end;
+end;
+
 { === Построение ответов об ошибках === }
 
 procedure TMockDeviceTransport.BuildErrorResponse(aCOP, aErrorCode: Byte;
@@ -433,10 +490,19 @@ begin
   aResponse := BuildFrame(fAddress, COP_ERROR, aData, fUseCRC);
 end;
 
-procedure TMockDeviceTransport.BuildUnsupportedResponse(aCOP: Byte;
+procedure TMockDeviceTransport.BuildUnsupportedResponse({%H-}aCOP: Byte;
   out aResponse: TBytes);
+var
+  aData: TBytes = nil;
+  S: string;
+  I: Integer;
 begin
-  aResponse := BuildFrame(fAddress, COP_UNSUPPORTED, nil, fUseCRC);
+  { По протоколу ответ FDh несёт строку «NAME Vers» }
+  S := fDeviceName + ' ' + fDeviceVersion;
+  SetLength(aData, Length(S));
+  for I := 1 to Length(S) do
+    aData[I - 1] := Byte(S[I]);
+  aResponse := BuildFrame(fAddress, COP_UNSUPPORTED, aData, fUseCRC);
 end;
 
 { === Обработка запроса и формирование ответа === }
@@ -480,13 +546,23 @@ begin
     Exit;
   end;
 
+  { Проверка: команда не входит в набор профиля модели (05Н/05Д) —
+    как у реального прибора, отвечаем FDh «не поддерживается» }
+  if not IsCOPSupportedByModel(aCOP) then
+  begin
+    BuildUnsupportedResponse(aCOP, aResponse);
+    Exit;
+  end;
+
   case aCOP of
 
     { === Весовые команды === }
 
     COP_GET_BRUTTO, COP_GET_NETTO, COP_GET_FIXED_BRUTTO:
     begin
-      aW := EncodeWeight(fWeight, fWeightStable, fWeightOverload, fWeightNegative, fWeightDecimalPlaces);
+      { У ТВ-003/05Д ответ «нетто» несёт бит D5 (режим Нетто) в CON }
+      aW := EncodeWeight(fWeight, fWeightStable, fWeightOverload, fWeightNegative,
+        fWeightDecimalPlaces, (fModel = mmTV003_05D) and (aCOP = COP_GET_NETTO));
       aResponse := BuildFrame(fAddress, aCOP, aW, fUseCRC);
     end;
 
@@ -651,6 +727,21 @@ begin
 
     COP_GET_ADC_CODE:
     begin
+      { ТВ-003/05Д передаёт в запросе байт N: 1 — текущий код, 2 — приращение.
+        Без байта N (общий протокол) — текущий код. }
+      if (Length(aData) >= 1) and (aData[0] = 2) then
+      begin
+        if Length(fADCIncrementCode) > 0 then
+          aResponse := BuildFrame(fAddress, COP_GET_ADC_CODE, fADCIncrementCode, fUseCRC)
+        else
+        begin
+          { Значение по умолчанию: 4 байта LE, имитирующие приращение кода }
+          SetLength(aData, 4);
+          aData[0] := $00; aData[1] := $20; aData[2] := $00; aData[3] := $00;
+          aResponse := BuildFrame(fAddress, COP_GET_ADC_CODE, aData, fUseCRC);
+        end
+      end
+      else
       if Length(fADCCode) > 0 then
         aResponse := BuildFrame(fAddress, COP_GET_ADC_CODE, fADCCode, fUseCRC)
       else
@@ -660,6 +751,14 @@ begin
         aData[0] := $80; aData[1] := $00;
         aResponse := BuildFrame(fAddress, COP_GET_ADC_CODE, aData, fUseCRC);
       end;
+    end;
+
+    { === Идентификация прибора === }
+
+    COP_UNSUPPORTED:
+    begin
+      { Прямой запрос FDh (ТВ-003/05Д): ответ «NAME Vers» }
+      BuildUnsupportedResponse(aCOP, aResponse);
     end;
 
     { === Установка параметров (без состояния — просто подтверждаем) === }

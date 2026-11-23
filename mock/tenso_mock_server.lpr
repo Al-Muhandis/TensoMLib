@@ -23,6 +23,11 @@ program tenso_mock_server;
     -a <addr-list>  Адрес(а) прибора $01..$9F через запятую: «-a 1,3,5» -
                     НЕСКОЛЬКО виртуальных приборов на одной шине (мультиадрес,
                     адрес маршрутизирует кадры; по умолчанию: 1)
+    -model <name>   Профиль модели прибора (по умолчанию: uni):
+                      uni — весь протокол;
+                      05n — ТВ-003/05Н (C0,C1,C2,C3,C8,CE);
+                      05d — ТВ-003/05Д (C0,C2,C3,CC с байтом N,FD; нетто с
+                            битом D5). Неподдерживаемые команды — ответ FDh.
     -baud <rate>    Скорость (по умолчанию: 9600)
     -crc            Использовать CRC (по умолчанию: автоопределение)
     -nocrc          Не использовать CRC
@@ -399,6 +404,11 @@ begin
   WriteLn('  -a <addr-list>  Device address(es) $01..$9F, comma-separated');
   WriteLn('                  (e.g. -a 1,3,5 = MULTIPLE devices on one bus,');
   WriteLn('                  default: 1)');
+  WriteLn('  -model <name>   Device model profile (default: uni):');
+  WriteLn('                    uni - full protocol;');
+  WriteLn('                    05n - TV-003/05N (C0,C1,C2,C3,C8,CE only);');
+  WriteLn('                    05d - TV-003/05D (C0,C2,C3,CC with N byte,FD);');
+  WriteLn('                  unsupported commands answer FDh');
   WriteLn('  -crc            Force CRC mode (default: auto-detect)');
   WriteLn('  -nocrc          Force no-CRC mode');
   WriteLn('  -w <value>      Initial weight (default: 0.0)');
@@ -519,6 +529,8 @@ var
   aDelay: Integer;
   aDev: TMockDeviceTransport;
   aAddrList: string;
+  aModel: TMockModel;
+  aModelArg: string;
   I: Integer;
 begin
   if HasFlag('-h') or HasFlag('-?') then
@@ -537,6 +549,18 @@ begin
 
   CRCForced := HasFlag('-crc') or HasFlag('-nocrc');
   aUseCRC := not HasFlag('-nocrc');
+
+  aModelArg := LowerCase(ArgValue('-model', 'uni'));
+  case aModelArg of
+    'uni': aModel := mmUniversal;
+    '05n': aModel := mmTV003_05N;
+    '05d': aModel := mmTV003_05D;
+  else
+    begin
+      WriteLn('ERROR: -model expects uni|05n|05d, got "', aModelArg, '"');
+      Halt(2);
+    end;
+  end;
 
   aWeight := StrToFloatDef(ArgValue('-w', '0'), 0.0);
   aDecimals := StrToIntDef(ArgValue('-decimals', '1'), 1);
@@ -585,6 +609,21 @@ begin
     for I := 0 to High(aAddrs) do
     begin
       aDev := Bus.AddDevice(aAddrs[I], aUseCRC);
+      aDev.Model := aModel;
+      case aModel of
+        mmTV003_05N:
+        begin
+          aDev.DeviceName := 'TB003/05N';
+          aDev.DeviceVersion := '10.02';
+        end;
+        mmTV003_05D:
+        begin
+          aDev.DeviceName := 'TB003/05D';
+          aDev.DeviceVersion := '10.13AX';
+        end;
+      else
+        ; { uni — идентификация по умолчанию (TB003/05 1.0) }
+      end;
       aDev.Weight := aWeight;
       aDev.WeightStable := not HasFlag('-unstable');
       aDev.WeightNegative := HasFlag('-negative');
@@ -634,6 +673,14 @@ begin
       Write(Format('$%02X (SN %d)', [Bus.Device(I).Address, Bus.Device(I).SerialNumber]));
     end;
     WriteLn;
+    case aModel of
+      mmTV003_05N: WriteLn('Model: TV-003/05N (C0,C1,C2,C3,C8,CE; rest answers FDh)');
+      mmTV003_05D: WriteLn('Model: TV-003/05D (C0,C2,C3,CC(N),FD; rest answers FDh)');
+    else
+      WriteLn('Model: universal (full protocol)');
+    end;
+    WriteLn(Format('FDh identity: %s %s',
+      [Bus.Device(0).DeviceName, Bus.Device(0).DeviceVersion]));
     WriteLn(Format('CRC: %s  Weight: %s  Decimals: %d',
       [IfThen(Bus.Device(0).UseCRC, 'ON', 'OFF (auto)'), FloatToStr(Bus.Device(0).Weight), Bus.Device(0).WeightDecimalPlaces]));
     WriteLn;
