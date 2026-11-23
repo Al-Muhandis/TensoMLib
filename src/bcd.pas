@@ -126,6 +126,9 @@ begin
   { D4 = успокоение }
   Result.Stable := (aCON and $10) <> 0;
 
+  { D5 = режим «Нетто» (ТВ-003/05Д; в общем протоколе — резерв) }
+  Result.NettoMode := (aCON and $20) <> 0;
+
   { D3 = перегруз }
   Result.Overload := (aCON and $08) <> 0;
 end;

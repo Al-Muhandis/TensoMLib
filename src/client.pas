@@ -66,10 +66,11 @@ type
     procedure RaiseTimeoutError(const aMsg: string);
     procedure RaiseTransportError(const aMsg: string);
     function SendCommand(aCOP: Byte; const aData: TBytes = nil;
-      aAlsoAcceptAddr: Byte = 0): TParsedFrame;
+      aAlsoAcceptAddr: Byte = 0; aAcceptUnsupported: Boolean = False): TParsedFrame;
     procedure SendRequestOnce(const aReqFrame: TBytes);
     function ReceiveResponseOnce(aAlsoAcceptAddr: Byte = 0): TParsedFrame;
-    procedure ClassifyResponse(const aParsed: TParsedFrame; aCOP: Byte);
+    procedure ClassifyResponse(const aParsed: TParsedFrame; aCOP: Byte;
+      aAcceptUnsupported: Boolean = False);
     procedure DoFrameLog(aDirection: TFrameDirection; const aHex: string);
     function IsRetryableException(E: Exception): Boolean;
 
@@ -136,6 +137,12 @@ type
     { Получить серийный номер (A1h). Возвращает 3-байтовый SN как Cardinal. }
     function GetSerialNumber: Cardinal;
 
+    { Тип устройства и версия ПО (запрос FDh).
+      ТВ-003/05Д отвечает FDh со строкой «NAME Vers» (например «TB006 V1.06»);
+      остальные приборы отвечают FDh с той же строкой на неизвестные команды.
+      Возвращает payload ответа как строку (без обрамляющих пробелов). }
+    function GetDeviceVersion: string;
+
     { Передать состояние весоизмерительной системы (BFh). }
     function GetSystemStatus: Byte;
 
@@ -174,8 +181,12 @@ type
     { Запрос параметров калибровки (CBh). }
     function GetCalibrationParams: TBytes;
 
-    { Запрос значения кода АЦП (CCh). }
-    function GetADCCode: TBytes;
+    { Запрос значения кода АЦП (CCh).
+      AMode: 0 — запрос без байта данных (общий протокол, ТВ-003/05Н);
+             1 — текущий код АЦП, 2 — приращение кода (байт N, ТВ-003/05Д).
+      Возвращает байты кода как есть: младшие первыми, длина и назначение
+      байтов зависят от модификации прибора. }
+    function GetADCCode(aMode: Byte = 0): TBytes;
 
     { === Дозирование === }
 
@@ -278,7 +289,7 @@ end;
 
 { === SendCommand: только оркестрация попыток === }
 function TTensoMDevice.SendCommand(aCOP: Byte; const aData: TBytes;
-  aAlsoAcceptAddr: Byte): TParsedFrame;
+  aAlsoAcceptAddr: Byte; aAcceptUnsupported: Boolean): TParsedFrame;
 var
   aReqFrame: TBytes;
   aAttempt, aMaxAttempts: Integer;
@@ -320,7 +331,7 @@ begin
 
     { Сюда попадаем только при успешно разобранном кадре. Прибор ответил корректно, но семантически это может быть
       ошибка — повтор здесь не поможет. }
-    ClassifyResponse(Result, aCOP);
+    ClassifyResponse(Result, aCOP, aAcceptUnsupported);
     Exit; { Успех }
   end;
 end;
@@ -415,8 +426,12 @@ end;
 
 { Проверяет уже успешно разобранный кадр на смысловые ошибки:
   ответ прибора об ошибке (EEh), неподдерживаемую команду (FDh),
-  несовпадение COP ответа с запросом. Все ошибки здесь — НЕповторяемые. }
-procedure TTensoMDevice.ClassifyResponse(const aParsed: TParsedFrame; aCOP: Byte);
+  несовпадение COP ответа с запросом. Все ошибки здесь — НЕповторяемые.
+  AAcceptUnsupported = True допускает ответ FDh — используется прямым
+  запросом идентификации прибора (GetDeviceVersion), где FDh и есть
+  ожидаемый ответ. }
+procedure TTensoMDevice.ClassifyResponse(const aParsed: TParsedFrame; aCOP: Byte;
+  aAcceptUnsupported: Boolean);
 begin
   { Ошибка прибора (EEh) }
   if aParsed.COP = COP_ERROR then
@@ -428,8 +443,8 @@ begin
       RaiseDeviceError('Device error EEh');
   end;
 
-  { Неподдерживаемая команда (FDh) }
-  if aParsed.COP = COP_UNSUPPORTED then
+  { Неподдерживаемая команда (FDh) — кроме прямого запроса идентификации }
+  if (aParsed.COP = COP_UNSUPPORTED) and not aAcceptUnsupported then
     RaiseProtocolError(Format('The %02Xh command is not supported by the device', [aCOP]));
 
   { COP ответа совпадает с запросом }
@@ -584,6 +599,19 @@ begin
           or Cardinal(aPF.Data[2]);
 end;
 
+function TTensoMDevice.GetDeviceVersion: string;
+var
+  aPF: TParsedFrame;
+  I: Integer;
+begin
+  { Ответ FDh — ожидаемый, полезная нагрузка «NAME Vers» }
+  aPF := SendCommand(COP_UNSUPPORTED, nil, 0, True);
+  Result := '';
+  for I := 0 to High(aPF.Data) do
+    Result += Char(aPF.Data[I]);
+  Result := Trim(Result);
+end;
+
 function TTensoMDevice.GetSystemStatus: Byte;
 var
   aPF: TParsedFrame;
@@ -691,11 +719,23 @@ begin
   Result := Copy(aPF.Data, 0, Length(aPF.Data));
 end;
 
-function TTensoMDevice.GetADCCode: TBytes;
+function TTensoMDevice.GetADCCode(aMode: Byte): TBytes;
 var
+  aData: TBytes = nil;
   aPF: TParsedFrame;
 begin
-  aPF := SendCommand(COP_GET_ADC_CODE);
+  if aMode > 2 then
+    raise EArgumentOutOfRangeException.CreateFmt(
+      'GetADCCode: invalid mode %d (0..2)', [aMode]);
+
+  { AMode > 0 — запрос с байтом N (ТВ-003/05Д): 1 — текущий код, 2 — приращение }
+  if aMode > 0 then
+  begin
+    SetLength(aData, 1);
+    aData[0] := aMode;
+  end;
+
+  aPF := SendCommand(COP_GET_ADC_CODE, aData);
   Result := Copy(aPF.Data, 0, Length(aPF.Data));
 end;
 

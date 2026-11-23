@@ -108,7 +108,9 @@ type
     Stable:        Boolean;  { D4 байта CON = 1: вес успокоился }
     Overload:      Boolean;  { D3 байта CON = 1: перегруз }
     Negative:      Boolean;  { D7 байта CON = 1: минус }
-    DecimalPlaces: Integer;  { D0-D2 байта CON: позиция запятой (0..3) }
+    NettoMode:     Boolean;  { D5 байта CON = 1: прибор в режиме «Нетто»
+                               (ТВ-003/05Д; в общем протоколе бит — резерв) }
+    DecimalPlaces: Integer;  { D0-D2 байта CON: позиция запятой (0..7) }
   end;
 
   { Разобранный кадр ответа }

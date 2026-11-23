@@ -34,6 +34,7 @@ type
     procedure Test_GetBrutto_Negative;
     procedure Test_GetBrutto_Overload;
     procedure Test_GetNetto;
+    procedure Test_GetNetto_NettoMode;
 
     { Тарирование }
     procedure Test_Tare;
@@ -71,6 +72,16 @@ type
 
     { Счётчики }
     procedure Test_GetCounter;
+
+    { Код АЦП (CCh): байт N в запросе (ТВ-003/05Д) }
+    procedure Test_GetADCCode_NoModeByte;
+    procedure Test_GetADCCode_Mode1SendsN;
+    procedure Test_GetADCCode_Mode2SendsN;
+    procedure Test_GetADCCode_InvalidMode;
+
+    { Идентификация прибора (FDh) }
+    procedure Test_GetDeviceVersion;
+    procedure Test_GetDeviceVersion_EEhStillRaises;
 
     { Дозирование }
     procedure Test_DosingStart;
@@ -286,6 +297,34 @@ begin
     AssertEquals('Weight', 50.0, W.Weight, 0.001);
     AssertTrue('Stable', W.Stable);
     AssertEquals('Decimals', 0, W.DecimalPlaces);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ ТВ-003/05Д: бит D5 байта CON — прибор в режиме «Нетто» }
+procedure TTestClient.Test_GetNetto_NettoMode;
+var
+  W: TWeightData;
+  aRespFrame: TBytes;
+  aData: TBytes = nil;
+begin
+  SetupMock(True);
+  try
+    { BCD 75 → [$75,$00,$00],
+      CON: Netto(D5)+Stable(D4)+DecimalPos=1(D0) → $31 }
+    SetLength(aData, 4);
+    aData[0] := $75; aData[1] := $00; aData[2] := $00; aData[3] := $31;
+    aRespFrame := BuildFrame($01, COP_GET_NETTO, aData, True);
+    fMock.QueueResponse(aRespFrame);
+
+    W := fDev.GetNettoWeight;
+
+    AssertEquals('Weight', 7.5, W.Weight, 0.001);
+    AssertTrue('NettoMode', W.NettoMode);
+    AssertTrue('Stable', W.Stable);
+    AssertEquals('Decimals', 1, W.DecimalPlaces);
   finally
     fDev.Free;
     fMock.Free;
@@ -721,6 +760,160 @@ begin
     aResult := fDev.GetCounter(1);
     AssertEquals('Length', 5, Length(aResult));
     AssertEquals('NW', $01, aResult[0]);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ === Код АЦП (CCh): байт N в запросе === }
+
+{ AMode=0 — запрос без байта данных (общий протокол, ТВ-003/05Н) }
+procedure TTestClient.Test_GetADCCode_NoModeByte;
+var
+  aRespFrame, aData, aSent: TBytes;
+begin
+  SetupMock(True);
+  try
+    SetLength(aData, 2);
+    aData[0] := $80; aData[1] := $00;
+    aRespFrame := BuildFrame($01, COP_GET_ADC_CODE, aData, True);
+    fMock.QueueResponse(aRespFrame);
+
+    aData := fDev.GetADCCode;
+
+    AssertEquals('Result length', 2, Length(aData));
+    AssertEquals('Sent 1 frame', 1, fMock.GetSentCount);
+    aSent := fMock.GetSentData(0);
+    { FF Adr CC CRC FF FF — без байта данных }
+    AssertEquals('Frame length (no data byte)', 6, Length(aSent));
+    AssertEquals('COP', $CC, aSent[2]);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ AMode=1 — в запросе байт N=1 (текущий код АЦП, ТВ-003/05Д) }
+procedure TTestClient.Test_GetADCCode_Mode1SendsN;
+var
+  aRespFrame, aData, aSent: TBytes;
+begin
+  SetupMock(True);
+  try
+    SetLength(aData, 2);
+    aData[0] := $80; aData[1] := $00;
+    aRespFrame := BuildFrame($01, COP_GET_ADC_CODE, aData, True);
+    fMock.QueueResponse(aRespFrame);
+
+    aData := fDev.GetADCCode(1);
+
+    AssertEquals('Result length', 2, Length(aData));
+    aSent := fMock.GetSentData(0);
+    { FF Adr CC N CRC FF FF }
+    AssertEquals('Frame length (N byte + CRC)', 7, Length(aSent));
+    AssertEquals('COP', $CC, aSent[2]);
+    AssertEquals('N', $01, aSent[3]);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ AMode=2 — в запросе байт N=2 (приращение кода, ТВ-003/05Д) }
+procedure TTestClient.Test_GetADCCode_Mode2SendsN;
+var
+  aRespFrame, aData, aSent: TBytes;
+begin
+  SetupMock(True);
+  try
+    SetLength(aData, 4);
+    aData[0] := $00; aData[1] := $20; aData[2] := $00; aData[3] := $00;
+    aRespFrame := BuildFrame($01, COP_GET_ADC_CODE, aData, True);
+    fMock.QueueResponse(aRespFrame);
+
+    aData := fDev.GetADCCode(2);
+
+    AssertEquals('Result length', 4, Length(aData));
+    aSent := fMock.GetSentData(0);
+    AssertEquals('Frame length (N byte + CRC)', 7, Length(aSent));
+    AssertEquals('N', $02, aSent[3]);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ AMode>2 — аргументная ошибка, кадр не отправляется }
+procedure TTestClient.Test_GetADCCode_InvalidMode;
+var
+  aRaised: Boolean;
+begin
+  SetupMock(True);
+  try
+    aRaised := False;
+    try
+      fDev.GetADCCode(3);
+    except
+      on E: EArgumentOutOfRangeException do
+        aRaised := True;
+    end;
+    AssertTrue('Should raise EArgumentOutOfRangeException', aRaised);
+    AssertEquals('Nothing sent', 0, fMock.GetSentCount);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ === Идентификация прибора (FDh) === }
+
+{ Прямой запрос FDh: ответ «NAME Vers» возвращается строкой,
+  ответ FDh не трактуется как «команда не поддерживается» }
+procedure TTestClient.Test_GetDeviceVersion;
+var
+  aRespFrame: TBytes;
+  aData: TBytes = nil;
+  S: string;
+begin
+  SetupMock(True);
+  try
+    S := 'TB003/05D 10.13AX';
+    SetLength(aData, Length(S));
+    Move(S[1], aData[0], Length(S));
+    aRespFrame := BuildFrame($01, COP_UNSUPPORTED, aData, True);
+    fMock.QueueResponse(aRespFrame);
+
+    AssertEquals('Version string', 'TB003/05D 10.13AX', fDev.GetDeviceVersion);
+    AssertEquals('Sent 1 frame', 1, fMock.GetSentCount);
+  finally
+    fDev.Free;
+    fMock.Free;
+  end;
+end;
+
+{ Ошибка прибора EEh пробрасывается и при прямом запросе FDh }
+procedure TTestClient.Test_GetDeviceVersion_EEhStillRaises;
+var
+  aRespFrame: TBytes;
+  aData: TBytes = nil;
+  aRaised: Boolean;
+begin
+  SetupMock(True);
+  try
+    SetLength(aData, 1);
+    aData[0] := ERR_CRC;
+    aRespFrame := BuildFrame($01, COP_ERROR, aData, True);
+    fMock.QueueResponse(aRespFrame);
+
+    aRaised := False;
+    try
+      fDev.GetDeviceVersion;
+    except
+      on E: ETensoMDeviceError do
+        aRaised := True;
+    end;
+    AssertTrue('Should raise ETensoMDeviceError', aRaised);
   finally
     fDev.Free;
     fMock.Free;
